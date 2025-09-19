@@ -28,7 +28,7 @@
 #include "models/mlcommons_tiny_v01/vww/vww.h"
 #include "models/mnv2/mnv2.h"
 #include "models/pdti8/pdti8.h"
-
+#include "models/ds_cnn_stream_fe/ds_cnn.h"
 inline void no_menu() {}
 
 // Automatically incrementing compile time constant character.
@@ -70,6 +70,9 @@ static struct Menu MENU = {
 #if defined(INCLUDE_MODEL_MLCOMMONS_TINY_V01_VWW)
         MENU_ITEM(AUTO_INC_CHAR, "MLCommons Tiny V0.1 Visual Wake Words",
                   mlcommons_tiny_v01_vww_menu),
+#endif
+#if defined(INCLUDE_MODEL_DS_CNN_STREAM_FE)
+        MENU_ITEM(AUTO_INC_CHAR, "Ds cnn stream fe", ds_cnn_stream_fe_menu),
 #endif
 #if AUTO_INC_CHAR == STARTING_SEL_CHAR
         MENU_ITEM('!', "No models selected! Check defines in Makefile!",
