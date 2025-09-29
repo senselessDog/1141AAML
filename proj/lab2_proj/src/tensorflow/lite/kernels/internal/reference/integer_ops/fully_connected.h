@@ -19,7 +19,7 @@ limitations under the License.
 
 #include "tensorflow/lite/kernels/internal/common.h"
 #include "tensorflow/lite/kernels/internal/portable_tensor_utils.h"
-
+#include "cfu.h"
 namespace tflite {
 namespace reference_integer_ops {
 
@@ -134,13 +134,41 @@ inline void FullyConnected(
   const int output_depth = output_shape.Dims(output_dim_count - 1);
   TFLITE_DCHECK_LE(output_depth, filter_shape.Dims(filter_dim_count - 2));
   const int accum_depth = filter_shape.Dims(filter_dim_count - 1);
+  cfu_op1(0, input_offset, 0);
+  cfu_op2(0, filter_offset, 0); // 新增對 filter_offset 的設定
   for (int b = 0; b < batches; ++b) {
     for (int out_c = 0; out_c < output_depth; ++out_c) {
+      cfu_op0(1, 0, 0);
       int32_t acc = 0;
-      for (int d = 0; d < accum_depth; ++d) {
-        int32_t input_val = input_data[b * accum_depth + d];
-        int32_t filter_val = filter_data[out_c * accum_depth + d];
-        acc += (filter_val + filter_offset) * (input_val + input_offset);
+      
+      const int normal_depth = accum_depth - (accum_depth % 4);
+      const int remaining_depth = normal_depth - normal_depth;
+      int d = 0;
+
+      // --- 關鍵修改 3: 手動打包的高效路徑 ---
+      for (; d < normal_depth; d += 4) {
+        uint32_t packed_input_vals = 0;
+        uint32_t packed_filter_vals = 0;
+
+        packed_input_vals =
+            *reinterpret_cast<const int32_t*>(&input_data[b * accum_depth + d]);
+
+        packed_filter_vals =
+            *reinterpret_cast<const int32_t*>(&filter_data[out_c * accum_depth + d]);
+
+        acc = cfu_op0(0, packed_input_vals, packed_filter_vals);
+      }
+
+      // --- 關鍵修改 4: 處理零頭的安全路徑 ---
+      if (remaining_depth > 0) {
+          uint32_t packed_input_vals = 0;
+          uint32_t packed_filter_vals = 0;
+
+          for (int i = 0; i < remaining_depth; ++i) {
+              packed_input_vals |= (static_cast<uint32_t>(input_data[b * accum_depth + d + i]) & 0xFF) << (i * 8);
+              packed_filter_vals |= (static_cast<uint32_t>(filter_data[out_c * accum_depth + d + i]) & 0xFF) << (i * 8);
+          }
+          acc = cfu_op0(0, packed_input_vals, packed_filter_vals);
       }
       if (bias_data) {
         acc += bias_data[out_c];

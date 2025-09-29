@@ -104,23 +104,17 @@ inline void ConvPerChannel(
               int in_channel = 0;
 
               // --- 關鍵修改 3: 手動打包的高效路徑 (取代 memcpy) ---
-              for (; in_channel <= filter_input_depth - 4; in_channel += 4) {
+              for (; in_channel <= normal_depth - 4; in_channel += 4) {
                   uint32_t packed_input_vals = 0;
                   uint32_t packed_filter_vals = 0;
 
                   // 透過位元運算，手動將 4 個 byte 打包進一個 32-bit 整數
                   // 這種方式非常高效，且沒有記憶體對齊問題
                   packed_input_vals =
-                      (uint8_t)input_ptr_base[in_channel + 0] << 0   |
-                      (uint8_t)input_ptr_base[in_channel + 1] << 8   |
-                      (uint8_t)input_ptr_base[in_channel + 2] << 16  |
-                      (uint8_t)input_ptr_base[in_channel + 3] << 24;
+                      *reinterpret_cast<const int32_t*>(input_ptr_base + in_channel);
 
                   packed_filter_vals =
-                      (uint8_t)filter_ptr_base[in_channel + 0] << 0   |
-                      (uint8_t)filter_ptr_base[in_channel + 1] << 8   |
-                      (uint8_t)filter_ptr_base[in_channel + 2] << 16  |
-                      (uint8_t)filter_ptr_base[in_channel + 3] << 24;
+                      *reinterpret_cast<const int32_t*>(filter_ptr_base + in_channel);
 
                   acc = cfu_op0(0, packed_input_vals, packed_filter_vals);
               }
