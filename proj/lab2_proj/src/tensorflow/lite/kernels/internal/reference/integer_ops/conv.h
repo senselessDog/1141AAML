@@ -34,7 +34,7 @@ inline void ConvPerChannel(
     int8_t* output_data) {
   print_conv_params(params, input_shape, filter_shape, output_shape);
   // Get parameters.
-  // const int32_t input_offset = params.input_offset;  // r = s(q - Z)
+  const int32_t input_offset = params.input_offset;  // r = s(q - Z)
   const int stride_width = params.stride_width;
   const int stride_height = params.stride_height;
   const int dilation_width_factor = params.dilation_width_factor;
@@ -70,6 +70,7 @@ inline void ConvPerChannel(
   const int filters_per_group = output_depth / groups;
   const int output_height = output_shape.Dims(1);
   const int output_width = output_shape.Dims(2);
+  cfu_op1(0, input_offset, 0);
   for (int batch = 0; batch < batches; ++batch) {
     for (int out_y = 0; out_y < output_height; ++out_y) {
       const int in_y_origin = (out_y * stride_height) - pad_height;
@@ -77,6 +78,7 @@ inline void ConvPerChannel(
         const int in_x_origin = (out_x * stride_width) - pad_width;
         for (int out_channel = 0; out_channel < output_depth; ++out_channel) {
           auto group = out_channel / filters_per_group;
+          
           cfu_op0(1, 0, 0);
           int32_t acc = 0;
           for (int filter_y = 0; filter_y < filter_height; ++filter_y) {
@@ -93,31 +95,48 @@ inline void ConvPerChannel(
                 continue;
               }
 
-              // 2. 修改迴圈以一次處理 4 個 channel
-              for (int in_channel = 0; in_channel < filter_input_depth;
-                 in_channel += 4) {
-                
-                // 3. 準備並打包 "原始" 資料
-                // 注意：因為硬體 cfu.v 會處理 offset，軟體這裡不能再加 offset
-                uint32_t packed_input_vals = 0;
-                uint32_t packed_filter_vals = 0;
+              const int8_t* input_ptr_base = &input_data[Offset(input_shape, batch, in_y, in_x, group * filter_input_depth)];
+              const int8_t* filter_ptr_base = &filter_data[Offset(filter_shape, out_channel, filter_y, filter_x, 0)];
+              // --- 關鍵修改 1: 計算剩餘通道數 ---
+              const int normal_depth = filter_input_depth - (filter_input_depth % 4);
+              const int remaining_depth = filter_input_depth - normal_depth;
+              
+              int in_channel = 0;
 
-                // 從記憶體讀取 4 筆資料並打包成 32-bit 整數
-                packed_input_vals = 
-                    (uint8_t)input_data[Offset(input_shape, batch, in_y, in_x, in_channel + 0 + group * filter_input_depth)] << 0   |
-                    (uint8_t)input_data[Offset(input_shape, batch, in_y, in_x, in_channel + 1 + group * filter_input_depth)] << 8   |
-                    (uint8_t)input_data[Offset(input_shape, batch, in_y, in_x, in_channel + 2 + group * filter_input_depth)] << 16  |
-                    (uint8_t)input_data[Offset(input_shape, batch, in_y, in_x, in_channel + 3 + group * filter_input_depth)] << 24;
+              // --- 關鍵修改 3: 手動打包的高效路徑 (取代 memcpy) ---
+              for (; in_channel <= filter_input_depth - 4; in_channel += 4) {
+                  uint32_t packed_input_vals = 0;
+                  uint32_t packed_filter_vals = 0;
 
-                packed_filter_vals = 
-                    (uint8_t)filter_data[Offset(filter_shape, out_channel, filter_y, filter_x, in_channel + 0)] << 0  |
-                    (uint8_t)filter_data[Offset(filter_shape, out_channel, filter_y, filter_x, in_channel + 1)] << 8  |
-                    (uint8_t)filter_data[Offset(filter_shape, out_channel, filter_y, filter_x, in_channel + 2)] << 16 |
-                    (uint8_t)filter_data[Offset(filter_shape, out_channel, filter_y, filter_x, in_channel + 3)] << 24;
-                
-                // 4. 呼叫硬體加速器 (funct7=0)
-                // 硬體會計算 (input + offset) * filter，並進行累加，最後返回 acc 的新值
-                acc = cfu_op0(0, packed_input_vals, packed_filter_vals);
+                  // 透過位元運算，手動將 4 個 byte 打包進一個 32-bit 整數
+                  // 這種方式非常高效，且沒有記憶體對齊問題
+                  packed_input_vals =
+                      (uint8_t)input_ptr_base[in_channel + 0] << 0   |
+                      (uint8_t)input_ptr_base[in_channel + 1] << 8   |
+                      (uint8_t)input_ptr_base[in_channel + 2] << 16  |
+                      (uint8_t)input_ptr_base[in_channel + 3] << 24;
+
+                  packed_filter_vals =
+                      (uint8_t)filter_ptr_base[in_channel + 0] << 0   |
+                      (uint8_t)filter_ptr_base[in_channel + 1] << 8   |
+                      (uint8_t)filter_ptr_base[in_channel + 2] << 16  |
+                      (uint8_t)filter_ptr_base[in_channel + 3] << 24;
+
+                  acc = cfu_op0(0, packed_input_vals, packed_filter_vals);
+              }
+
+              if (remaining_depth > 0) {
+                  uint32_t packed_input_vals = 0;
+                  uint32_t packed_filter_vals = 0;
+
+                  // 用一個小迴圈，將剩下的 1~3 個 bytes 手動打包進 32-bit 整數的低位元
+                  for (int d = 0; d < remaining_depth; ++d) {
+                      // & 0xFF 確保只取 8-bit 的無號數值，避免符號擴展問題
+                      packed_input_vals |= (static_cast<uint32_t>(input_ptr_base[in_channel + d]) & 0xFF) << (d * 8);
+                      packed_filter_vals |= (static_cast<uint32_t>(filter_ptr_base[in_channel + d]) & 0xFF) << (d * 8);
+                  }
+                  // 將打包好的零頭資料，送給 CFU 做最後一次運算
+                  acc = cfu_op0(0, packed_input_vals, packed_filter_vals);
               }
             }
           }
