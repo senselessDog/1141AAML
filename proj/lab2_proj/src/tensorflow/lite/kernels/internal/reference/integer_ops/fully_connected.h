@@ -134,41 +134,39 @@ inline void FullyConnected(
   const int output_depth = output_shape.Dims(output_dim_count - 1);
   TFLITE_DCHECK_LE(output_depth, filter_shape.Dims(filter_dim_count - 2));
   const int accum_depth = filter_shape.Dims(filter_dim_count - 1);
+  // 設定硬體的兩個 Offset
   cfu_op1(0, input_offset, 0);
   cfu_op2(0, filter_offset, 0); // 新增對 filter_offset 的設定
   for (int b = 0; b < batches; ++b) {
     for (int out_c = 0; out_c < output_depth; ++out_c) {
+      // --- 關鍵修改 1: 重置硬體累加器，但軟體 acc 變數保持原樣 ---
       cfu_op0(1, 0, 0);
       int32_t acc = 0;
-      
+
+      // --- 關鍵修改 2: 採用高效的混合式 SIMD 迴圈 ---
       const int normal_depth = accum_depth - (accum_depth % 4);
-      const int remaining_depth = normal_depth - normal_depth;
+      
       int d = 0;
 
-      // --- 關鍵修改 3: 手動打包的高效路徑 ---
+      // 高效路徑 (處理 4 的倍數部分)
       for (; d < normal_depth; d += 4) {
-        uint32_t packed_input_vals = 0;
-        uint32_t packed_filter_vals = 0;
-
-        packed_input_vals =
-            *reinterpret_cast<const int32_t*>(&input_data[b * accum_depth + d]);
-
-        packed_filter_vals =
-            *reinterpret_cast<const int32_t*>(&filter_data[out_c * accum_depth + d]);
-
-        acc = cfu_op0(0, packed_input_vals, packed_filter_vals);
+        // 宣告臨時變數來接收打包好的資料
+        int32_t input_word = *reinterpret_cast<const int32_t*>(&input_data[b * accum_depth + d]);
+        int32_t filter_word = *reinterpret_cast<const int32_t*>(&filter_data[out_c * accum_depth + d]);
+        acc = cfu_op0(0, input_word, filter_word);
       }
 
-      // --- 關鍵修改 4: 處理零頭的安全路徑 ---
+      // 高效的零頭處理 (手動打包並呼叫 CFU)
+      const int remaining_depth = accum_depth - normal_depth;
       if (remaining_depth > 0) {
-          uint32_t packed_input_vals = 0;
-          uint32_t packed_filter_vals = 0;
+          uint32_t packed_input_rem = 0;
+          uint32_t packed_filter_rem = 0;
 
           for (int i = 0; i < remaining_depth; ++i) {
-              packed_input_vals |= (static_cast<uint32_t>(input_data[b * accum_depth + d + i]) & 0xFF) << (i * 8);
-              packed_filter_vals |= (static_cast<uint32_t>(filter_data[out_c * accum_depth + d + i]) & 0xFF) << (i * 8);
+              packed_input_rem |= (static_cast<uint32_t>(input_data[b * accum_depth + d + i]) & 0xFF) << (i * 8);
+              packed_filter_rem |= (static_cast<uint32_t>(filter_data[out_c * accum_depth + d + i]) & 0xFF) << (i * 8);
           }
-          acc = cfu_op0(0, packed_input_vals, packed_filter_vals);
+          acc = cfu_op0(0, packed_input_rem, packed_filter_rem);
       }
       if (bias_data) {
         acc += bias_data[out_c];

@@ -95,42 +95,34 @@ inline void ConvPerChannel(
                 continue;
               }
 
-              const int8_t* input_ptr_base = &input_data[Offset(input_shape, batch, in_y, in_x, group * filter_input_depth)];
-              const int8_t* filter_ptr_base = &filter_data[Offset(filter_shape, out_channel, filter_y, filter_x, 0)];
-              // --- 關鍵修改 1: 計算剩餘通道數 ---
-              const int normal_depth = filter_input_depth - (filter_input_depth % 4);
-              const int remaining_depth = filter_input_depth - normal_depth;
+              // --- 使用更有描述性的變數名稱 ---
+              const int8_t* input_base_ptr = &input_data[Offset(input_shape, batch, in_y, in_x, group * filter_input_depth)];
+              const int8_t* filter_base_ptr = &filter_data[Offset(filter_shape, out_channel, filter_y, filter_x, 0)];
               
-              int in_channel = 0;
+              const int simd_depth = filter_input_depth - (filter_input_depth % 4);
+              const int remainder_count = filter_input_depth - simd_depth;
+              
+              int channel_idx = 0;
+              int32_t simd_input_word = 0;
+              int32_t simd_filter_word = 0;
 
-              // --- 關鍵修改 3: 手動打包的高效路徑 (取代 memcpy) ---
-              for (; in_channel <= normal_depth - 4; in_channel += 4) {
-                  uint32_t packed_input_vals = 0;
-                  uint32_t packed_filter_vals = 0;
-
-                  // 透過位元運算，手動將 4 個 byte 打包進一個 32-bit 整數
-                  // 這種方式非常高效，且沒有記憶體對齊問題
-                  packed_input_vals =
-                      *reinterpret_cast<const int32_t*>(input_ptr_base + in_channel);
-
-                  packed_filter_vals =
-                      *reinterpret_cast<const int32_t*>(filter_ptr_base + in_channel);
-
-                  acc = cfu_op0(0, packed_input_vals, packed_filter_vals);
+              // --- 高效路徑 (處理 4 的倍數部分) ---
+              for (; channel_idx < simd_depth; channel_idx += 4) {
+                  simd_input_word = *reinterpret_cast<const int32_t*>(input_base_ptr + channel_idx);
+                  simd_filter_word = *reinterpret_cast<const int32_t*>(filter_base_ptr + channel_idx);
+                  acc = cfu_op0(0, simd_input_word, simd_filter_word);
               }
 
-              if (remaining_depth > 0) {
-                  uint32_t packed_input_vals = 0;
-                  uint32_t packed_filter_vals = 0;
+              // --- 高效的零頭處理 ---
+              if (remainder_count > 0) {
+                  uint32_t remainder_input_word = 0;
+                  uint32_t remainder_filter_word = 0;
 
-                  // 用一個小迴圈，將剩下的 1~3 個 bytes 手動打包進 32-bit 整數的低位元
-                  for (int d = 0; d < remaining_depth; ++d) {
-                      // & 0xFF 確保只取 8-bit 的無號數值，避免符號擴展問題
-                      packed_input_vals |= (static_cast<uint32_t>(input_ptr_base[in_channel + d]) & 0xFF) << (d * 8);
-                      packed_filter_vals |= (static_cast<uint32_t>(filter_ptr_base[in_channel + d]) & 0xFF) << (d * 8);
+                  for (int remainder_idx = 0; remainder_idx < remainder_count; ++remainder_idx) {
+                      remainder_input_word |= (static_cast<uint32_t>(input_base_ptr[channel_idx + remainder_idx]) & 0xFF) << (remainder_idx * 8);
+                      remainder_filter_word |= (static_cast<uint32_t>(filter_base_ptr[channel_idx + remainder_idx]) & 0xFF) << (remainder_idx * 8);
                   }
-                  // 將打包好的零頭資料，送給 CFU 做最後一次運算
-                  acc = cfu_op0(0, packed_input_vals, packed_filter_vals);
+                  acc = cfu_op0(0, remainder_input_word, remainder_filter_word);
               }
             }
           }
