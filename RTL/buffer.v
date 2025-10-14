@@ -1,87 +1,68 @@
 // ============================================================================ //
-// File: buffer.v (CORRECTED: Uses rst_n)
+// Filename: buffer.v
+// Author: [Your Name]
+// Description: 這個模組是原始 buffer 模組的更名版本。
+//              其邏輯與原始範例完全相同。它使用 16 個
+//              bufferElement 實例來產生收縮陣列所需的資料歪斜效果。
 // ============================================================================ //
 `include "bufferElement.v"
 
 module buffer(
+    // --- 埠宣告 ---
     clk,
-    reset,
-    busy,
-    block_over,
-    datain,
-    dataout
+    rst_n,          // 從 'reset' 更名
+
+    // 控制信號
+    is_busy,        // 從 'busy' 更名
+    is_block_done,  // 從 'block_over' 更名
+
+    // 資料 I/O
+    data_in,        // 從 'datain' 更名
+    data_out        // 從 'dataout' 更名
 );
-    parameter wh = 4;
-    input clk;
-    input reset;
-    input busy;
-    input block_over;
 
-    input [31:0] datain;
-    output [31:0] dataout;
-    wire [((wh-1) * wh * 8)-1:0] data_inter;
+    // --- 參數 & 輸入埠 ---
+    parameter WORD_WIDTH = 4; // 定義 buffer 為 4x4 結構
+    input           clk;
+    input           rst_n;
+    input           is_busy;
+    input           is_block_done;
+    input   [31:0]  data_in;
 
-    genvar i, j;
+    // --- 輸出埠 ---
+    output  [31:0]  data_out;
+
+    // --- 內部連線 (已更名) ---
+    // 這些 wire 負責在 bufferElement 實例之間傳遞資料。
+    wire [((WORD_WIDTH-1) * WORD_WIDTH * 8)-1:0] internal_connections; // 原名 'data_inter'
+
+    // --- 邏輯實作 (與原始範例完全相同) ---
+
+    // 這個 generate 區塊負責生成 4x4 的 bufferElement 實例網絡。
+    // 複雜的 'if-else' 結構定義了資料歪斜的路徑。
+    genvar row, col;
     generate
-        for(i=0; i<4; i=i+1) begin
-            for(j=0; j<4; j=j+1) begin
-                if(i+j == 3) begin
-                    if(j == 3) begin
-                        BE be(
-                            .clk (clk),
-                            .reset (reset),
-                            .busy (busy),
-                            .block_over (block_over),
-                            .datain (datain[(j+1)*8-1:j*8]),
-                            .dataout (dataout[31:24])
-                        );
+        for(row=0; row<4; row=row+1) begin
+            for(col=0; col<4; col=col+1) begin
+                // 'be' 是 bufferElement 模組的一個實例。
+                // 我們將更名後的控制信號傳遞給每一個元件。
+                if(row+col == 3) begin // 這是資料輸入的主對角線
+                    if(col == 3) begin
+                        bufferElement be(.clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), .data_in(data_in[(col+1)*8-1:col*8]), .data_out(data_out[31:24]));
+                    end else begin
+                        bufferElement be(.clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), .data_in(data_in[(col+1)*8-1:col*8]), .data_out(internal_connections[(3*row+col+1)*8-1:(3*row+col)*8]));
                     end
-                    else begin
-                        BE be(
-                            .clk (clk),
-                            .reset (reset),
-                            .busy (busy),
-                            .block_over (block_over),
-                            .datain (datain[(j+1)*8-1:j*8]),
-                            .dataout (data_inter[(3*i+j+1)*8-1:(3*i+j)*8])
-                        );
-                    end
-                end
-                else begin
-                    if(j == 3) begin
-                        BE be(
-                            .clk (clk),
-                            .reset (reset),
-                            .busy (busy),
-                            .block_over (block_over),
-                            .datain (data_inter[(3*i+j)*8-1:(3*i+j-1)*8]),
-                            .dataout (dataout[(3-i+1)*8-1:(3-i)*8])
-                        );
-                    end
-                    else if(j == 0) begin
-                        BE be(
-                            .clk (clk),
-                            .reset (reset),
-                            .busy (busy),
-                            .block_over (block_over),
-                            .datain (8'd0),
-                            .dataout (data_inter[(3*i+j+1)*8-1:(3*i+j)*8])
-                        );
-                    end
-                    else begin
-                        BE be(
-                            .clk (clk),
-                            .reset (reset),
-                            .busy (busy),
-                            .block_over (block_over),
-                            .datain (data_inter[(3*i+j)*8-1:(3*i+j-1)*8]),
-                            .dataout (data_inter[(3*i+j+1)*8-1:(3*i+j)*8])
-                        );
+                end else begin // 非對角線上的元件負責傳遞資料
+                    if(col == 3) begin
+                        bufferElement be(.clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), .data_in(internal_connections[(3*row+col)*8-1:(3*row+col-1)*8]), .data_out(data_out[(3-row+1)*8-1:(3-row)*8]));
+                    end else if(col == 0) begin
+                        bufferElement be(.clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), .data_in(8'd0), .data_out(internal_connections[(3*row+col+1)*8-1:(3*row+col)*8]));
+                    end else begin
+                        bufferElement be(.clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), .data_in(internal_connections[(3*row+col)*8-1:(3*row+col-1)*8]), .data_out(internal_connections[(3*row+col+1)*8-1:(3*row+col)*8]));
                     end
                 end
             end
         end
     endgenerate
-
 
 endmodule

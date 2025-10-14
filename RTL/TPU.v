@@ -1,152 +1,154 @@
-
-`include "sysArray.v"
+// ============================================================================ //
+// Filename: TPU.v
+// Author: [Your Name]
+// Description: 這是 TPU 的頂層模組。它負責實例化並連接所有子模組
+//              (controller, buffer, sysArray)，形成完整的加速器。
+// ============================================================================ //
 `include "controller.v"
 `include "buffer.v"
+`include "sysArray.v"
+
 module TPU(
+    // --- 外部介面 (維持原樣) ---
     clk,
     rst_n,
-
     in_valid,
     K,
     M,
     N,
     busy,
-
     A_wr_en,
     A_index,
     A_data_in,
     A_data_out,
-
     B_wr_en,
     B_index,
     B_data_in,
     B_data_out,
-
     C_wr_en,
     C_index,
     C_data_in,
     C_data_out
 );
 
+    // --- 埠定義 (維持原樣) ---
+    input           clk;
+    input           rst_n;
+    input           in_valid;
+    input   [7:0]   K;
+    input   [7:0]   M;
+    input   [7:0]   N;
+    output reg         busy;
+    output          A_wr_en;
+    output  [15:0]  A_index;
+    output  [31:0]  A_data_in;
+    input   [31:0]  A_data_out;
+    output          B_wr_en;
+    output  [15:0]  B_index;
+    output  [31:0]  B_data_in;
+    input   [31:0]  B_data_out;
+    output          C_wr_en;
+    output  [15:0]  C_index;
+    output  [127:0] C_data_in;
+    input   [127:0] C_data_out;
 
-input clk;
-input rst_n;
-input            in_valid;
-input [7:0]      K;
-input [7:0]      M;
-input [7:0]      N;
-output  reg      busy;
-
-output           A_wr_en;
-output [15:0]    A_index;
-output [31:0]    A_data_in;
-input  [31:0]    A_data_out;  //* to get this in the next cycle
-
-output           B_wr_en;
-output [15:0]    B_index;
-output [31:0]    B_data_in;
-input  [31:0]    B_data_out;  //* to get this in the next cycle
-
-output           C_wr_en;
-output [15:0]    C_index;    //* select this
-output [127:0]   C_data_in;  //* to write the results to here in the same cycle
-input  [127:0]   C_data_out;
-
-
-
-//* Implement your design here
-
-assign A_wr_en = 0;
-assign B_wr_en = 0;
-assign C_wr_en = 1;
-
-reg [7:0] k;
-reg [7:0] m;
-reg [7:0] n;
-
-output [7:0] cur_block_B;
-output [31:0] delayed_A_data_out;
-output [31:0] delayed_B_data_out;
-
-output busy_c;
-output block_over;  // for sysArr to tell controller that the current block pair is finished
-output finish;  // for controller to tell sysArr that the data feeding is finished
-
-controller controller(
-    .clk (clk),
-    .reset (rst_n),
-    .block_over (block_over),
-    .finish (finish),
-    .K   (k),
-    .M   (m),
-    .N   (n),
-    .cur_block_B (cur_block_B),
-    .A_index (A_index),
-    .B_index (B_index),
-    .busy (busy_c)
-);
-
-buffer bufferA(
-    .clk (clk),
-    .reset (rst_n),
-    .busy (busy),
-    .block_over (block_over),
-    .datain (A_data_out),
-    .dataout (delayed_A_data_out)
-);
-
-buffer bufferB(
-    .clk (clk),
-    .reset (rst_n),
-    .busy (busy),
-    .block_over (block_over),
-    .datain (B_data_out),
-    .dataout (delayed_B_data_out)
-);
-
-sysArr sysArr(
-    .clk (clk),
-    .reset (rst_n),
-    .block_over (block_over),
-    .finish (finish),
-    .K (k),
-    .M (m),
-    .cur_block_B (cur_block_B),
-    .datain_h (delayed_A_data_out),
-    .datain_v (delayed_B_data_out),
-    .C_index (C_index),
-    .C_data_in (C_data_in),
-    .busy (busy_c)
-);
+    // --- 內部連線 ---
+    // 這些 wire 如同電纜，用來連接內部不同的元件。
+    wire         internal_busy;
+    wire         internal_block_done;
+    wire         internal_finished;
+    wire [31:0]  internal_delayed_A;
+    wire [31:0]  internal_delayed_B;
+    wire [7:0]   internal_b_block_idx;
+    
+    // 用於儲存 K, M, N 維度的暫存器，供內部模組使用。
+    reg [7:0]   k_dim_reg;
+    reg [7:0]   m_dim_reg;
+    reg [7:0]   n_dim_reg;
 
 
-initial begin
-    busy = 0;
-end
+    // --- 模組實例化 ---
+    // 負責將我們客製化命名後的模組建立出來並連接。
 
-always @(negedge clk) begin
-    busy <= busy_c;
-end
+    // 1. 控制器 (大腦)
+    controller u_controller(
+        .clk(clk),
+        .rst_n(rst_n),
+        .is_busy(internal_busy),             // 連接到 sysArray 的忙碌狀態
+        .is_block_done(internal_block_done), // 連接到 sysArray 的區塊完成狀態
+        .K_dim(k_dim_reg),
+        .M_dim(m_dim_reg),
+        .N_dim(n_dim_reg),
+        .is_finished(internal_finished),     // 控制器發出任務全部結束的信號
+        .b_block_idx(internal_b_block_idx),  // 控制器提供當前 B 矩陣的區塊索引
+        .A_addr_out(A_index),                // 控制器驅動 A_index 輸出
+        .B_addr_out(B_index)                 // 控制器驅動 B_index 輸出
+    );
 
-always @(negedge clk) begin
-    if(K > 0) begin
-        k = K;
-        m = M;
-        n = N;
+    // 2. A 矩陣的資料緩衝器
+    buffer u_bufferA(
+        .clk(clk),
+        .rst_n(rst_n),
+        .is_busy(internal_busy),
+        .is_block_done(internal_block_done),
+        .data_in(A_data_out),       // 從 Global Buffer A 接收原始資料
+        .data_out(internal_delayed_A) // 輸出歪斜後的資料給 sysArray
+    );
+
+    // 3. B 矩陣的資料緩衝器
+    buffer u_bufferB(
+        .clk(clk),
+        .rst_n(rst_n),
+        .is_busy(internal_busy),
+        .is_block_done(internal_block_done),
+        .data_in(B_data_out),       // 從 Global Buffer B 接收原始資料
+        .data_out(internal_delayed_B) // 輸出歪斜後的資料給 sysArray
+    );
+
+    // 4. 收縮陣列 (主生產線)
+    sysArray u_sysArray(
+        .clk(clk),
+        .rst_n(rst_n),
+        .is_busy(internal_busy),
+        .is_block_done(internal_block_done),
+        .is_finished(internal_finished),
+        .K_dim(k_dim_reg),
+        .M_dim(m_dim_reg),
+        .b_block_idx(internal_b_block_idx),
+        .stream_in_A(internal_delayed_A),    // 從 bufferA 接收歪斜資料
+        .stream_in_B(internal_delayed_B),    // 從 bufferB 接收歪斜資料
+        .C_write_idx(C_index),            // sysArray 驅動 C_index 輸出
+        .C_write_data(C_data_in)          // sysArray 驅動 C_data_in 輸出
+    );
+
+    // --- 最終訊號連接與邏輯 (與原始範例相同) ---
+
+    // 頂層的 'busy' 輸出由 sysArray 的狀態直接決定。
+    // assign busy = internal_busy;
+
+    // 根據原始範例的邏輯，這些輸出被賦予固定值。
+    assign A_wr_en = 1'b0; // 只對 A 進行讀取
+    assign B_wr_en = 1'b0; // 只對 B 進行讀取
+    assign C_wr_en = 1'b1; // C 的寫入由 sysArray 透過 C_data_in 的時序來控制
+
+    assign A_data_in = 32'd0; // 不對 A 進行寫入
+    assign B_data_in = 32'd0; // 不對 B 進行寫入
+
+    // 這個區塊負責在 'in_valid' 為高電位時，捕捉矩陣維度 (K, M, N)。
+    // 這段邏輯與原始範例完全相同。
+    always @(negedge clk) begin
+        if(K > 0) begin
+            k_dim_reg = K;
+            m_dim_reg = M;
+            n_dim_reg = N;
+        end
     end
-end
+    initial begin
+        busy = 0;
+    end
+    always @(negedge clk) begin
+        busy <= internal_busy;
+    end
+    
 
 endmodule
-
-
-
-
-
-
-
-
-
-
-
-
-

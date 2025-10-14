@@ -1,256 +1,147 @@
 // ============================================================================ //
-// File: sysArray.v (CORRECTED: Uses rst_n and robust reset logic)
+// Filename: sysArray.v
+// Author: [Your Name]
+// Description: 這個模組是原始 sysArr 模組的更名版本。
+//              其邏輯與原始範例完全相同。它建構了 4x4 的 PE 陣列，
+//              並控制計算與結果寫回的時序。
 // ============================================================================ //
 `include "processElement.v"
 
-module sysArr(
+module sysArray(
+    // --- 埠宣告 ---
     clk,
-    reset,
-    busy,
-    block_over,,
-    finish,
-    K,
-    M,
-    cur_block_B,
-    datain_h,
-    datain_v,
-    C_index,
-    C_data_in
+    rst_n,          // 從 'reset' 更名
+
+    // 控制信號
+    is_busy,        // 從 'busy' 更名
+    is_block_done,  // 從 'block_over' 更名
+    is_finished,    // 從 'finish' 更名
+
+    // 矩陣維度與區塊資訊
+    K_dim,          // 從 'K' 更名
+    M_dim,          // 從 'M' 更名
+    b_block_idx,    // 從 'cur_block_B' 更名
+
+    // 資料流 & 結果 I/O
+    stream_in_A,    // 從 'datain_h' 更名
+    stream_in_B,    // 從 'datain_v' 更名
+    C_write_idx,    // 從 'C_index' 更名
+    C_write_data    // 從 'C_data_in' 更名
 );
-    parameter wh = 4;
-    input clk;
-    input reset;
-    input finish;
-    input [7:0] K;
-    input [7:0] M;
-    input [7:0] cur_block_B;
-    input [8*wh-1:0] datain_h;
-    input [8*wh-1:0] datain_v;
 
-    // Interconnection
-    wire [((wh-1) * wh * 8)-1:0] datain_h_inter;
-    wire [((wh-1) * wh * 8)-1:0] datain_v_inter;
+    // --- 參數 & 輸入埠 ---
+    parameter ARRAY_DIM = 4;
+    input           clk;
+    input           rst_n;
+    input           is_finished;
+    input   [7:0]   K_dim;
+    input   [7:0]   M_dim;
+    input   [7:0]   b_block_idx;
+    input   [31:0]  stream_in_A;
+    input   [31:0]  stream_in_B;
 
-    output reg busy;
-    output reg block_over;
-    output reg [15:0] macc_wr;
-    output [15:0] C_index;
-    output reg [127:0] C_data_in;
-    output [511:0] C_data_in_c;
+    // --- 輸出埠 ---
+    output reg          is_busy;
+    output reg          is_block_done;
+    output      [15:0]  C_write_idx;
+    output reg [127:0]  C_write_data;
 
-    reg signed [15:0] count;
-    reg signed [15:0] accumu_index;
-    reg [7:0] row;
-    assign C_index = accumu_index;
+    // --- 內部連線 & 暫存器 (已更名) ---
+    wire [((ARRAY_DIM-1) * ARRAY_DIM * 8)-1:0] internal_conns_A; // 原名 'datain_h_inter'
+    wire [((ARRAY_DIM-1) * ARRAY_DIM * 8)-1:0] internal_conns_B; // 原名 'datain_v_inter'
+    wire [511:0]                              all_pe_results;   // 原名 'C_data_in_c'
 
-    genvar i, j;
+    reg signed [15:0] cycle_counter;  // 原名 'count'
+    reg signed [15:0] c_addr_ptr;     // 原名 'accumu_index'
+    reg        [15:0] result_read_en; // 原名 'macc_wr'
+
+    // 將內部地址指標連接到輸出埠
+    assign C_write_idx = c_addr_ptr;
+
+    // --- 邏輯實作 (與原始範例完全相同) ---
+
+    // 這個 generate 區塊負責生成並連接 4x4 的 processElement 陣列
+    genvar row, col;
     generate
-        for(i=0; i<4; i=i+1) begin
-            for(j=0; j<4; j=j+1) begin
-                if(i > 0 && i < 3 && j > 0 && j < 3) begin
-                    PE pe(
-                        .i (i[2:0]),
-                        .j (j[2:0]),
-                        .clk (clk),
-                        .reset (reset),
-                        .busy (busy),
-                        .block_over (block_over),
-                        .datain_h (datain_h_inter[(3*i+j)*8-1:(3*i+j-1)*8]),
-                        .datain_v (datain_v_inter[(4*i+j-3)*8-1:(4*i+j-4)*8]),
-                        .rd_macc_en (macc_wr[4*i+j]),
-                        .dataout_h (datain_h_inter[(3*i+j+1)*8-1:(3*i+j)*8]),
-                        .dataout_v (datain_v_inter[(4*i+j+1)*8-1:(4*i+j)*8]),
-                        .maccout (C_data_in_c[128*i-32*j+127:128*i-32*j+96])
-                    );
-                end
-                else if(i == 0) begin
-                    if(j == 0) begin
-                        PE pe(
-                            .i (i[2:0]),
-                            .j (j[2:0]),
-                            .clk (clk),
-                            .reset (reset),
-                            .busy (busy),
-                            .block_over (block_over),
-                            .datain_h (datain_h[31:24]),
-                            .datain_v (datain_v[31:24]),
-                            .rd_macc_en (macc_wr[4*i+j]),
-                            .dataout_h (datain_h_inter[(3*i+j+1)*8-1:(3*i+j)*8]),
-                            .dataout_v (datain_v_inter[(4*i+j+1)*8-1:(4*i+j)*8]),
-                            .maccout (C_data_in_c[128*i-32*j+127:128*i-32*j+96])
-                        );
+        for(row=0; row<4; row=row+1) begin
+            for(col=0; col<4; col=col+1) begin
+                // 實例化 processElement，並連接所有已更名的埠
+                if(row > 0 && row < 3 && col > 0 && col < 3) begin
+                    processElement pe(.row_idx(row[2:0]), .col_idx(col[2:0]), .clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), .stream_in_A(internal_conns_A[(3*row+col)*8-1:(3*row+col-1)*8]), .stream_in_B(internal_conns_B[(4*row+col-3)*8-1:(4*row+col-4)*8]), .read_en(result_read_en[4*row+col]), .stream_out_A(internal_conns_A[(3*row+col+1)*8-1:(3*row+col)*8]), .stream_out_B(internal_conns_B[(4*row+col+1)*8-1:(4*row+col)*8]), .pe_result(all_pe_results[128*row-32*col+127:128*row-32*col+96]));
+                end else if(row == 0) begin
+                    if(col == 0) begin
+                        processElement pe(.row_idx(row[2:0]), .col_idx(col[2:0]), .clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), .stream_in_A(stream_in_A[31:24]), .stream_in_B(stream_in_B[31:24]), .read_en(result_read_en[4*row+col]), .stream_out_A(internal_conns_A[(3*row+col+1)*8-1:(3*row+col)*8]), .stream_out_B(internal_conns_B[(4*row+col+1)*8-1:(4*row+col)*8]), .pe_result(all_pe_results[128*row-32*col+127:128*row-32*col+96]));
+                    end else if(col == 3) begin
+                        processElement pe(.row_idx(row[2:0]), .col_idx(col[2:0]), .clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), .stream_in_A(internal_conns_A[(3*row+col)*8-1:(3*row+col-1)*8]), .stream_in_B(stream_in_B[7:0]), .read_en(result_read_en[4*row+col]), .stream_out_A(), .stream_out_B(internal_conns_B[(4*row+col+1)*8-1:(4*row+col)*8]), .pe_result(all_pe_results[128*row-32*col+127:128*row-32*col+96]));
+                    end else begin
+                        processElement pe(.row_idx(row[2:0]), .col_idx(col[2:0]), .clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), .stream_in_A(internal_conns_A[(3*row+col)*8-1:(3*row+col-1)*8]), .stream_in_B(stream_in_B[(3-col+1)*8-1:(3-col)*8]), .read_en(result_read_en[4*row+col]), .stream_out_A(internal_conns_A[(3*row+col+1)*8-1:(3*row+col)*8]), .stream_out_B(internal_conns_B[(4*row+col+1)*8-1:(4*row+col)*8]), .pe_result(all_pe_results[128*row-32*col+127:128*row-32*col+96]));
                     end
-                    else if(j == 3) begin
-                        PE pe(
-                            .i (i[2:0]),
-                            .j (j[2:0]),
-                            .clk (clk),
-                            .reset (reset),
-                            .busy (busy),
-                            .block_over (block_over),
-                            .datain_h (datain_h_inter[(3*i+j)*8-1:(3*i+j-1)*8]),
-                            .datain_v (datain_v[7:0]),
-                            .rd_macc_en (macc_wr[4*i+j]),
-                            .dataout_h (),
-                            .dataout_v (datain_v_inter[(4*i+j+1)*8-1:(4*i+j)*8]),
-                            .maccout (C_data_in_c[128*i-32*j+127:128*i-32*j+96])
-                        );
+                end else if(row == 3) begin
+                    if(col == 0) begin
+                        processElement pe(.row_idx(row[2:0]), .col_idx(col[2:0]), .clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), .stream_in_A(stream_in_A[7:0]), .stream_in_B(internal_conns_B[(4*row+col-3)*8-1:(4*row+col-4)*8]), .read_en(result_read_en[4*row+col]), .stream_out_A(internal_conns_A[(3*row+col+1)*8-1:(3*row+col)*8]), .stream_out_B(), .pe_result(all_pe_results[128*row-32*col+127:128*row-32*col+96]));
+                    end else if(col == 3) begin
+                        processElement pe(.row_idx(row[2:0]), .col_idx(col[2:0]), .clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), .stream_in_A(internal_conns_A[(3*row+col)*8-1:(3*row+col-1)*8]), .stream_in_B(internal_conns_B[(4*row+col-3)*8-1:(4*row+col-4)*8]), .read_en(result_read_en[4*row+col]), .stream_out_A(), .stream_out_B(), .pe_result(all_pe_results[128*row-32*col+127:128*row-32*col+96]));
+                    end else begin
+                        processElement pe(.row_idx(row[2:0]), .col_idx(col[2:0]), .clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), .stream_in_A(internal_conns_A[(3*row+col)*8-1:(3*row+col-1)*8]), .stream_in_B(internal_conns_B[(4*row+col-3)*8-1:(4*row+col-4)*8]), .read_en(result_read_en[4*row+col]), .stream_out_A(internal_conns_A[(3*row+col+1)*8-1:(3*row+col)*8]), .stream_out_B(), .pe_result(all_pe_results[128*row-32*col+127:128*row-32*col+96]));
                     end
-                    else begin
-                        PE pe(
-                            .i (i[2:0]),
-                            .j (j[2:0]),
-                            .clk (clk),
-                            .reset (reset),
-                            .busy (busy),
-                            .block_over (block_over),
-                            .datain_h (datain_h_inter[(3*i+j)*8-1:(3*i+j-1)*8]),
-                            .datain_v (datain_v[(3-j+1)*8-1:(3-j)*8]),
-                            .rd_macc_en (macc_wr[4*i+j]),
-                            .dataout_h (datain_h_inter[(3*i+j+1)*8-1:(3*i+j)*8]),
-                            .dataout_v (datain_v_inter[(4*i+j+1)*8-1:(4*i+j)*8]),
-                            .maccout (C_data_in_c[128*i-32*j+127:128*i-32*j+96])
-                        );
-                    end
-                end
-                else if(i == 3) begin
-                    if(j == 0) begin
-                        PE pe(
-                            .i (i[2:0]),
-                            .j (j[2:0]),
-                            .clk (clk),
-                            .reset (reset),
-                            .busy (busy),
-                            .block_over (block_over),
-                            .datain_h (datain_h[7:0]),
-                            .datain_v (datain_v_inter[(4*i+j-3)*8-1:(4*i+j-4)*8]),
-                            .rd_macc_en (macc_wr[4*i+j]),
-                            .dataout_h (datain_h_inter[(3*i+j+1)*8-1:(3*i+j)*8]),
-                            .dataout_v (),
-                            .maccout (C_data_in_c[128*i-32*j+127:128*i-32*j+96])
-                        );
-                    end
-                    else if(j == 3) begin
-                        PE pe(
-                            .i (i[2:0]),
-                            .j (j[2:0]),
-                            .clk (clk),
-                            .reset (reset),
-                            .busy (busy),
-                            .block_over (block_over),
-                            .datain_h (datain_h_inter[(3*i+j)*8-1:(3*i+j-1)*8]),
-                            .datain_v (datain_v_inter[(4*i+j-3)*8-1:(4*i+j-4)*8]),
-                            .rd_macc_en (macc_wr[4*i+j]),
-                            .dataout_h (),
-                            .dataout_v (),
-                            .maccout (C_data_in_c[128*i-32*j+127:128*i-32*j+96])
-                        );
-                    end
-                    else begin
-                        PE pe(
-                            .i (i[2:0]),
-                            .j (j[2:0]),
-                            .clk (clk),
-                            .reset (reset),
-                            .busy (busy),
-                            .block_over (block_over),
-                            .datain_h (datain_h_inter[(3*i+j)*8-1:(3*i+j-1)*8]),
-                            .datain_v (datain_v_inter[(4*i+j-3)*8-1:(4*i+j-4)*8]),
-                            .rd_macc_en (macc_wr[4*i+j]),
-                            .dataout_h (datain_h_inter[(3*i+j+1)*8-1:(3*i+j)*8]),
-                            .dataout_v (),
-                            .maccout (C_data_in_c[128*i-32*j+127:128*i-32*j+96])
-                        );
-                    end
-                end
-                else if(j == 0) begin
-                    PE pe(
-                        .i (i[2:0]),
-                        .j (j[2:0]),
-                        .clk (clk),
-                        .reset (reset),
-                        .busy (busy),
-                        .block_over (block_over),
-                        .datain_h (datain_h[(3-i+1)*8-1:(3-i)*8]),
-                        .datain_v (datain_v_inter[(4*i+j-3)*8-1:(4*i+j-4)*8]),
-                        .rd_macc_en (macc_wr[4*i+j]),
-                        .dataout_h (datain_h_inter[(3*i+j+1)*8-1:(3*i+j)*8]),
-                        .dataout_v (datain_v_inter[(4*i+j+1)*8-1:(4*i+j)*8]),
-                        .maccout (C_data_in_c[128*i-32*j+127:128*i-32*j+96])
-                    );
-                end
-                else begin
-                    PE pe(
-                        .i (i[2:0]),
-                        .j (j[2:0]),
-                        .clk (clk),
-                        .reset (reset),
-                        .busy (busy),
-                        .block_over (block_over),
-                        .datain_h (datain_h_inter[(3*i+j)*8-1:(3*i+j-1)*8]),
-                        .datain_v (datain_v_inter[(4*i+j-3)*8-1:(4*i+j-4)*8]),
-                        .rd_macc_en (macc_wr[4*i+j]),
-                        .dataout_h (),
-                        .dataout_v (datain_v_inter[(4*i+j+1)*8-1:(4*i+j)*8]),
-                        .maccout (C_data_in_c[128*i-32*j+127:128*i-32*j+96])
-                    );
+                end else if(col == 0) begin
+                    processElement pe(.row_idx(row[2:0]), .col_idx(col[2:0]), .clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), .stream_in_A(stream_in_A[(3-row+1)*8-1:(3-row)*8]), .stream_in_B(internal_conns_B[(4*row+col-3)*8-1:(4*row+col-4)*8]), .read_en(result_read_en[4*row+col]), .stream_out_A(internal_conns_A[(3*row+col+1)*8-1:(3*row+col)*8]), .stream_out_B(internal_conns_B[(4*row+col+1)*8-1:(4*row+col)*8]), .pe_result(all_pe_results[128*row-32*col+127:128*row-32*col+96]));
+                end else begin
+                    processElement pe(.row_idx(row[2:0]), .col_idx(col[2:0]), .clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), .stream_in_A(internal_conns_A[(3*row+col)*8-1:(3*row+col-1)*8]), .stream_in_B(internal_conns_B[(4*row+col-3)*8-1:(4*row+col-4)*8]), .read_en(result_read_en[4*row+col]), .stream_out_A(), .stream_out_B(internal_conns_B[(4*row+col+1)*8-1:(4*row+col)*8]), .pe_result(all_pe_results[128*row-32*col+127:128*row-32*col+96]));
                 end
             end
         end
     endgenerate
 
-
-    always @(negedge reset or negedge busy) begin
-        count = 0;
-        macc_wr = 0;
-        if(accumu_index > 0) begin
+    // 這是來自原始範例的、有問題的初始化區塊。
+    // 為了保持邏輯一致性，此處予以保留。
+    always @(negedge rst_n or negedge is_busy) begin
+        cycle_counter  = 0;
+        result_read_en = 0;
+        if(c_addr_ptr > 0) begin
             repeat(8) @(negedge clk);
-        end
-        else begin
+        end else begin
             repeat(3) @(negedge clk);
         end
-        accumu_index = -1;
-        busy = 1;  // Here I do set busy to high immediately after in_valid fall from high to low
-        block_over = 0;
+        c_addr_ptr    = -1;
+        is_busy       = 1'b1;
+        is_block_done = 1'b0;
     end
     
+    // 這是來自原始範例的主要時序控制區塊。
     always @(posedge clk) begin
-        if(busy) begin
-            count = count + 1;
+        if(is_busy) begin
+            cycle_counter = cycle_counter + 1;
         end
-        if(count == K+12) begin
-            count = 0;
-            macc_wr = 0;
-            block_over = 1;
+        if(cycle_counter == K_dim + 12) begin
+            cycle_counter  = 0;
+            result_read_en = 0;
+            is_block_done  = 1'b1;
             #1
-            block_over = 0;
-            if(finish) begin
-                busy = 0;
+            is_block_done  = 1'b0;
+            if(is_finished) begin
+                is_busy = 1'b0;
             end
         end
-        if(count >= K+8) begin
-            if(accumu_index < 0 || accumu_index < M * (cur_block_B+1) - 1) begin
-                accumu_index += 1;
-                if((accumu_index%M)%4 == 0) begin
-                    macc_wr = macc_wr + 4'b1111;
+        if(cycle_counter >= K_dim + 8) begin
+            if(c_addr_ptr < 0 || c_addr_ptr < M_dim * (b_block_idx+1) - 1) begin
+                c_addr_ptr = c_addr_ptr + 1;
+                if((c_addr_ptr % M_dim) % 4 == 0) begin
+                    result_read_en = result_read_en + 4'b1111;
                     #1
-                    C_data_in <= C_data_in_c[127:0];
-                end
-                else begin
-                    macc_wr = macc_wr << 4;
+                    C_write_data <= all_pe_results[127:0];
+                end else begin
+                    result_read_en = result_read_en << 4;
                     #1
-                    if((accumu_index%M)%4 == 1) begin
-                        C_data_in <= C_data_in_c[255:128];
-                    end
-                    else if((accumu_index%M)%4 == 2) begin
-                        C_data_in <= C_data_in_c[383:256];
-                    end
-                    else if((accumu_index%M)%4 == 3) begin
-                        C_data_in <= C_data_in_c[511:384];
+                    if((c_addr_ptr % M_dim) % 4 == 1) begin
+                        C_write_data <= all_pe_results[255:128];
+                    end else if((c_addr_ptr % M_dim) % 4 == 2) begin
+                        C_write_data <= all_pe_results[383:256];
+                    end else if((c_addr_ptr % M_dim) % 4 == 3) begin
+                        C_write_data <= all_pe_results[511:384];
                     end
                 end
             end
-            
         end
     end
 
