@@ -1,8 +1,7 @@
 // ============================================================================ //
 // Filename: buffer.v
 // Author: [Your Name]
-// Description: 這個模組是原始 buffer 模組的更名版本。
-//              其邏輯與原始範例完全相同。它使用 16 個
+// Description: 它使用 16 個
 //              bufferElement 實例來產生收縮陣列所需的資料歪斜效果。
 // ============================================================================ //
 `include "bufferElement.v"
@@ -10,15 +9,15 @@
 module buffer(
     // --- 埠宣告 ---
     clk,
-    rst_n,          // 從 'reset' 更名
+    rst_n,          
 
     // 控制信號
-    is_busy,        // 從 'busy' 更名
-    is_block_done,  // 從 'block_over' 更名
+    is_busy,        
+    is_block_done,  
 
     // 資料 I/O
-    data_in,        // 從 'datain' 更名
-    data_out        // 從 'dataout' 更名
+    data_in,        
+    data_out        
 );
 
     // --- 參數 & 輸入埠 ---
@@ -32,11 +31,11 @@ module buffer(
     // --- 輸出埠 ---
     output  [31:0]  data_out;
 
-    // --- 內部連線 (已更名) ---
+    // --- 內部連線 ---
     // 這些 wire 負責在 bufferElement 實例之間傳遞資料。
-    wire [((WORD_WIDTH-1) * WORD_WIDTH * 8)-1:0] internal_connections; // 原名 'data_inter'
+    wire [((WORD_WIDTH-1) * WORD_WIDTH * 8)-1:0] internal_connections; 
 
-    // --- 邏輯實作 (與原始範例完全相同) ---
+    // --- 邏輯實作 ---
 
     // 這個 generate 區塊負責生成 4x4 的 bufferElement 實例網絡。
     // 複雜的 'if-else' 結構定義了資料歪斜的路徑。

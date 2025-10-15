@@ -1,27 +1,24 @@
 // ============================================================================ //
 // Filename: controller.v
-// Author: [Your Name]
-// Description: 這個模組是原始 controller 模組的更名版本。
-//              其邏輯與原始範例完全相同。它負責管理分塊策略
+// Description: 它負責管理分塊策略
 //              以及為 Global Buffer 生成地址。
 // ============================================================================ //
 module controller(
-    // --- 埠宣告 ---
     clk,
-    rst_n,          // 從 'reset' 更名
-    is_busy,        // 從 'busy' 更名
-    is_block_done,  // 從 'block_over' 更名
-    is_finished,    // 從 'finish' 更名
+    rst_n,          
+    is_busy,        
+    is_block_done,  
+    is_finished,    
 
-    // 矩陣維度與區塊資訊
-    K_dim,          // 從 'K' 更名
-    M_dim,          // 從 'M' 更名
-    N_dim,          // 從 'N' 更名
-    b_block_idx,    // 從 'cur_block_B' 更名
+    
+    K_dim,          
+    M_dim,          
+    N_dim,          
+    b_block_idx,    
 
     // 地址輸出
-    A_addr_out,     // 從 'A_index' 更名
-    B_addr_out      // 從 'B_index' 更名
+    A_addr_out,     
+    B_addr_out    
 );
 
     // --- 輸入埠 ---
@@ -33,27 +30,26 @@ module controller(
     input   [7:0]   M_dim;
     input   [7:0]   N_dim;
 
-    // --- 輸出埠 ---
+    // --- 輸出port ---
     output reg         is_finished;
     output reg [7:0]   b_block_idx;
     output      [15:0] A_addr_out;
     output      [15:0] B_addr_out;
     
-    // --- 內部暫存器 (已更名) ---
-    reg signed [15:0] addr_ptr_a;      // 原名 'count_A'
-    reg signed [15:0] addr_ptr_b;      // 原名 'count_B'
-    reg [7:0] a_block_total;   // 原名 'num_block_A'
-    reg [7:0] a_block_current; // 原名 'cur_block_A'
-    reg [7:0] b_block_total;   // 原名 'num_block_B'
+    // --- 內部暫存器 ---
+    reg signed [15:0] addr_ptr_a;     
+    reg signed [15:0] addr_ptr_b;     
+    reg [7:0] a_block_total;   
+    reg [7:0] a_block_current; 
+    reg [7:0] b_block_total;   
     
     // 將內部地址指標連接到輸出埠
     assign A_addr_out = addr_ptr_a;
     assign B_addr_out = addr_ptr_b;
 
-    // --- 邏輯實作 (與原始範例完全相同) ---
+    // --- 邏輯實作  ---
 
     // 這個區塊負責在一個新的矩陣乘法任務開始時，初始化控制器。
-    // 它包含了原始範例中不可合成的延遲。
     always @(negedge rst_n or negedge is_busy) begin
         if(is_finished >= 0) begin
             repeat(10) @(negedge clk);

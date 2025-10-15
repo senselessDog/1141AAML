@@ -1,22 +1,19 @@
 // ============================================================================ //
 // Filename: bufferElement.v
-// Author: [Your Name]
-// Description: 這個模組是原始 BE 模組的更名版本。
-//              其邏輯與原始範例完全相同。
-//              它的功能是一個可重置的、單週期的延遲元件。
+// Description: 它的功能是一個可重置的、單週期的延遲元件。
 // ============================================================================ //
 module bufferElement(
     // --- 埠宣告 ---
     clk,
-    rst_n,          // 從 'reset' 更名
+    rst_n,         
 
     // 控制信號
-    is_busy,        // 從 'busy' 更名
-    is_block_done,  // 從 'block_over' 更名
+    is_busy,        
+    is_block_done,  
 
     // 資料 I/O
-    data_in,        // 從 'datain' 更名
-    data_out        // 從 'dataout' 更名
+    data_in,        
+    data_out        
 );
 
     // --- 輸入埠 ---
@@ -29,18 +26,18 @@ module bufferElement(
     // --- 輸出埠 ---
     output reg [7:0]   data_out;
 
-    // --- 內部暫存器 (已更名) ---
+    // --- 內部暫存器 ---
     // 這個暫存器負責將資料暫存一個週期。
-    reg [7:0]   pipe_reg; // 原名 'datain_c'
+    reg [7:0]   pipe_reg;
 
-    // --- 邏輯實作 (與原始範例完全相同) ---
+    // --- 邏輯實作 ---
 
-    // 這個區塊負責在需要時清空內部暫存器。
+    // 清空內部暫存器。
     always @(negedge rst_n or negedge is_busy or posedge is_block_done) begin
         pipe_reg = 8'd0;
     end
 
-    // 這個區塊在時脈的正緣捕捉輸入資料。
+    // 在時脈的正緣捕捉輸入資料。
     always @(posedge clk) begin
         pipe_reg <= data_in;
     end

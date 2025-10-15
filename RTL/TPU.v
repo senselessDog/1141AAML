@@ -1,6 +1,5 @@
 // ============================================================================ //
 // Filename: TPU.v
-// Author: [Your Name]
 // Description: 這是 TPU 的頂層模組。它負責實例化並連接所有子模組
 //              (controller, buffer, sysArray)，形成完整的加速器。
 // ============================================================================ //
@@ -9,7 +8,6 @@
 `include "sysArray.v"
 
 module TPU(
-    // --- 外部介面 (維持原樣) ---
     clk,
     rst_n,
     in_valid,
@@ -31,7 +29,6 @@ module TPU(
     C_data_out
 );
 
-    // --- 埠定義 (維持原樣) ---
     input           clk;
     input           rst_n;
     input           in_valid;
@@ -53,7 +50,6 @@ module TPU(
     input   [127:0] C_data_out;
 
     // --- 內部連線 ---
-    // 這些 wire 如同電纜，用來連接內部不同的元件。
     wire         internal_busy;
     wire         internal_block_done;
     wire         internal_finished;
@@ -121,11 +117,6 @@ module TPU(
         .C_write_data(C_data_in)          // sysArray 驅動 C_data_in 輸出
     );
 
-    // --- 最終訊號連接與邏輯 (與原始範例相同) ---
-
-    // 頂層的 'busy' 輸出由 sysArray 的狀態直接決定。
-    // assign busy = internal_busy;
-
     // 根據原始範例的邏輯，這些輸出被賦予固定值。
     assign A_wr_en = 1'b0; // 只對 A 進行讀取
     assign B_wr_en = 1'b0; // 只對 B 進行讀取
@@ -135,17 +126,18 @@ module TPU(
     assign B_data_in = 32'd0; // 不對 B 進行寫入
 
     // 這個區塊負責在 'in_valid' 為高電位時，捕捉矩陣維度 (K, M, N)。
-    // 這段邏輯與原始範例完全相同。
-    always @(negedge clk) begin
+    always @(posedge in_valid) begin
         if(K > 0) begin
             k_dim_reg = K;
             m_dim_reg = M;
             n_dim_reg = N;
         end
     end
+    //為了初始化busy，避免RTL error
     initial begin
         busy = 0;
     end
+    //新的開始刷新busy
     always @(negedge clk) begin
         busy <= internal_busy;
     end

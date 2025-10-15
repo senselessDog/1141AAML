@@ -1,8 +1,6 @@
 // ============================================================================ //
 // Filename: sysArray.v
-// Author: [Your Name]
-// Description: 這個模組是原始 sysArr 模組的更名版本。
-//              其邏輯與原始範例完全相同。它建構了 4x4 的 PE 陣列，
+// Description: 它建構了 4x4 的 PE 陣列，
 //              並控制計算與結果寫回的時序。
 // ============================================================================ //
 `include "processElement.v"
@@ -10,23 +8,23 @@
 module sysArray(
     // --- 埠宣告 ---
     clk,
-    rst_n,          // 從 'reset' 更名
+    rst_n,        
 
     // 控制信號
-    is_busy,        // 從 'busy' 更名
-    is_block_done,  // 從 'block_over' 更名
-    is_finished,    // 從 'finish' 更名
+    is_busy,        
+    is_block_done,  
+    is_finished,    
 
     // 矩陣維度與區塊資訊
-    K_dim,          // 從 'K' 更名
-    M_dim,          // 從 'M' 更名
-    b_block_idx,    // 從 'cur_block_B' 更名
+    K_dim,          
+    M_dim,          
+    b_block_idx,    
 
     // 資料流 & 結果 I/O
-    stream_in_A,    // 從 'datain_h' 更名
-    stream_in_B,    // 從 'datain_v' 更名
-    C_write_idx,    // 從 'C_index' 更名
-    C_write_data    // 從 'C_data_in' 更名
+    stream_in_A,    
+    stream_in_B,    
+    C_write_idx,    
+    C_write_data    
 );
 
     // --- 參數 & 輸入埠 ---
@@ -46,19 +44,19 @@ module sysArray(
     output      [15:0]  C_write_idx;
     output reg [127:0]  C_write_data;
 
-    // --- 內部連線 & 暫存器 (已更名) ---
-    wire [((ARRAY_DIM-1) * ARRAY_DIM * 8)-1:0] internal_conns_A; // 原名 'datain_h_inter'
-    wire [((ARRAY_DIM-1) * ARRAY_DIM * 8)-1:0] internal_conns_B; // 原名 'datain_v_inter'
-    wire [511:0]                              all_pe_results;   // 原名 'C_data_in_c'
+    // --- 內部連線 & 暫存器 ---
+    wire [((ARRAY_DIM-1) * ARRAY_DIM * 8)-1:0] internal_conns_A; 
+    wire [((ARRAY_DIM-1) * ARRAY_DIM * 8)-1:0] internal_conns_B; 
+    wire [511:0]                              all_pe_results; 
 
-    reg signed [15:0] cycle_counter;  // 原名 'count'
-    reg signed [15:0] c_addr_ptr;     // 原名 'accumu_index'
-    reg        [15:0] result_read_en; // 原名 'macc_wr'
+    reg signed [15:0] cycle_counter;
+    reg signed [15:0] c_addr_ptr;     
+    reg        [15:0] result_read_en; 
 
     // 將內部地址指標連接到輸出埠
     assign C_write_idx = c_addr_ptr;
 
-    // --- 邏輯實作 (與原始範例完全相同) ---
+    // --- 邏輯實作 ---
 
     // 這個 generate 區塊負責生成並連接 4x4 的 processElement 陣列
     genvar row, col;
@@ -93,8 +91,6 @@ module sysArray(
         end
     endgenerate
 
-    // 這是來自原始範例的、有問題的初始化區塊。
-    // 為了保持邏輯一致性，此處予以保留。
     always @(negedge rst_n or negedge is_busy) begin
         cycle_counter  = 0;
         result_read_en = 0;
@@ -108,7 +104,7 @@ module sysArray(
         is_block_done = 1'b0;
     end
     
-    // 這是來自原始範例的主要時序控制區塊。
+    // 主要時序控制區塊。
     always @(posedge clk) begin
         if(is_busy) begin
             cycle_counter = cycle_counter + 1;
