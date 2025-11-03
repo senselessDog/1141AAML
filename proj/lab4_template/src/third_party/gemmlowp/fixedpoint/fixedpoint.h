@@ -23,7 +23,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
-
+#include "cfu.h"
 #include "../internal/detect_platform.h"
 
 namespace gemmlowp {
@@ -740,53 +740,17 @@ FixedPoint<tRawType, 0> exp_on_interval_between_negative_one_quarter_and_0_excl(
       constant_term,
       constant_term * (x + x4_over_24_plus_x3_over_6_plus_x2_over_2));
 }
-
-// Returns exp(x) for x < 0.
 template <typename tRawType, int tIntegerBits>
 FixedPoint<tRawType, 0> exp_on_negative_values(
     FixedPoint<tRawType, tIntegerBits> a) {
-  typedef FixedPoint<tRawType, tIntegerBits> InputF;
   typedef FixedPoint<tRawType, 0> ResultF;
-  static constexpr int kFractionalBits = InputF::kFractionalBits;
-  static constexpr int kIntegerBits = InputF::kIntegerBits;
-  const InputF kOneQuarter = InputF::template ConstantPOT<-2>();
-  InputF mask = kOneQuarter - InputF::FromScalarRaw(1);
-  InputF a_mod_quarter_minus_one_quarter = (a & mask) - kOneQuarter;
-  ResultF result = exp_on_interval_between_negative_one_quarter_and_0_excl(
-      Rescale<0>(a_mod_quarter_minus_one_quarter));
-  tRawType remainder = (a_mod_quarter_minus_one_quarter - a).raw();
 
-#define GEMMLOWP_EXP_BARREL_SHIFTER(Exponent, FixedPointMultiplier)         \
-  if (kIntegerBits > Exponent) {                                            \
-    const ResultF kMultiplier = GEMMLOWP_CHECKED_FIXEDPOINT_CONSTANT(       \
-        ResultF, FixedPointMultiplier, std::exp(-std::pow(2.0, Exponent))); \
-    static constexpr int kShiftAmount =                                     \
-        kIntegerBits > Exponent ? kFractionalBits + Exponent : 0;           \
-    result = SelectUsingMask(                                               \
-        MaskIfNonZero(BitAnd(remainder, Dup<tRawType>(1 << kShiftAmount))), \
-        result * kMultiplier, result);                                      \
-  }
+  ResultF ans  = ResultF::FromRaw(cfu_op0(1,a.raw(),0));
 
-  GEMMLOWP_EXP_BARREL_SHIFTER(-2, 1672461947);
-  GEMMLOWP_EXP_BARREL_SHIFTER(-1, 1302514674);
-  GEMMLOWP_EXP_BARREL_SHIFTER(+0, 790015084);
-  GEMMLOWP_EXP_BARREL_SHIFTER(+1, 290630308);
-  GEMMLOWP_EXP_BARREL_SHIFTER(+2, 39332535);
-  GEMMLOWP_EXP_BARREL_SHIFTER(+3, 720401);
-  GEMMLOWP_EXP_BARREL_SHIFTER(+4, 242);
-
-#undef GEMMLOWP_EXP_BARREL_SHIFTER
-
-  static constexpr int clampB = kIntegerBits > 5 ? 36 - kIntegerBits : 0;
-  if (kIntegerBits > 5) {
-    const InputF clamp =
-        GEMMLOWP_CHECKED_FIXEDPOINT_CONSTANT(InputF, -(1 << clampB), -32.0);
-    result = SelectUsingMask(MaskIfLessThan(a, clamp), ResultF::Zero(), result);
-  }
-
-  result = SelectUsingMask(MaskIfZero(a), ResultF::One(), result);
-  return result;
+  return ans;
 }
+// // Returns exp(x) for x < 0.
+
 
 // Implementation of tanh: (1 - exp(-2x)) / (1 + exp(-2x)).
 
@@ -865,7 +829,14 @@ FixedPoint<tRawType, 0> one_over_one_plus_x_for_x_in_0_1(
 template <typename tRawType, int tIntegerBits>
 FixedPoint<tRawType, 0> logistic_on_positive_values(
     FixedPoint<tRawType, tIntegerBits> a) {
-  return one_over_one_plus_x_for_x_in_0_1(exp_on_negative_values(-a));
+  // --- *** 換成這段 CFU 呼叫 *** ---
+  typedef FixedPoint<tRawType, 0> ResultF;
+  
+  // 呼叫 CFU，funct7=0 (觸發 Verilog 的 logistic_result)
+  // 注意：公式需要 e^(-x)，所以我們傳入 (-a)
+  ResultF ans =  ResultF::FromRaw(cfu_op0(0, (-a).raw(), 0));
+  // return one_over_one_plus_x_for_x_in_0_1(exp_on_negative_values(-a));
+  return ans;
 }
 
 // Returns logistic(x) = 1 / (1 + exp(-x)) for any x.

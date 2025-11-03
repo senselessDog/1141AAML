@@ -24,9 +24,7 @@ limitations under the License.
 #include "tensorflow/lite/kernels/internal/quantization_util.h"
 #include "tensorflow/lite/kernels/internal/types.h"
 #include "tensorflow/lite/kernels/op_macros.h"
-
 #include "perf.h"
-
 namespace tflite {
 namespace reference_ops {
 
@@ -71,7 +69,6 @@ inline void Softmax(const SoftmaxParams& params,
                     const RuntimeShape& input_shape, const InputT* input_data,
                     const RuntimeShape& output_shape, OutputT* output_data) {
   perf_enable_counter(5);
-
   const int32_t input_beta_multiplier = params.input_multiplier;
   const int32_t input_beta_left_shift = params.input_left_shift;
   const int diff_min = params.diff_min;
@@ -147,7 +144,6 @@ inline void Softmax(const SoftmaxParams& params,
       }
     }
   }
-
   perf_disable_counter(5);
 }
 

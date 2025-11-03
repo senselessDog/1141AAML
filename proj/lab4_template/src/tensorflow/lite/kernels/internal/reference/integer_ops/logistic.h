@@ -19,7 +19,7 @@ limitations under the License.
 #include <limits>
 
 #include "tensorflow/lite/kernels/internal/common.h"
-
+#include "perf.h"
 namespace tflite {
 namespace reference_integer_ops {
 
@@ -27,6 +27,7 @@ inline void Logistic(int32_t input_zero_point, int32_t input_range_radius,
                      int32_t input_multiplier, int32_t input_left_shift,
                      int32_t input_size, const int8_t* input_data,
                      int8_t* output_data) {
+  perf_enable_counter(6);
   // Integer bits must be in sync with Prepare() function.
   static constexpr int32_t kInputIntegerBits = 4;
   static constexpr int32_t kOutputIntegerBits = 8;
@@ -58,6 +59,7 @@ inline void Logistic(int32_t input_zero_point, int32_t input_range_radius,
       output_data[i] = static_cast<int8_t>(output_in_q23);
     }
   }
+  perf_disable_counter(6);
 }
 
 inline void Logistic(int32_t input_multiplier, int32_t input_left_shift,
