@@ -53,8 +53,8 @@ module TPU(
     wire         internal_busy;
     wire         internal_block_done;
     wire         internal_finished;
-    wire [31:0]  internal_delayed_A;
-    wire [31:0]  internal_delayed_B;
+    wire signed [31:0]  internal_delayed_A;
+    wire signed [31:0]  internal_delayed_B;
     wire [7:0]   internal_b_block_idx;
     
     // 用於儲存 K, M, N 維度的暫存器，供內部模組使用。

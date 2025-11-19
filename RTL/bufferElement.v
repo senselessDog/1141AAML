@@ -21,14 +21,14 @@ module bufferElement(
     input           rst_n;
     input           is_busy;
     input           is_block_done;
-    input   [7:0]   data_in;
+    input signed [7:0]   data_in;
 
     // --- 輸出埠 ---
-    output reg [7:0]   data_out;
+    output reg signed [7:0]   data_out;
 
     // --- 內部暫存器 ---
     // 這個暫存器負責將資料暫存一個週期。
-    reg [7:0]   pipe_reg;
+    reg signed [7:0]   pipe_reg;
 
     // --- 邏輯實作 ---
 

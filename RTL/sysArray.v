@@ -35,20 +35,20 @@ module sysArray(
     input   [7:0]   K_dim;
     input   [7:0]   M_dim;
     input   [7:0]   b_block_idx;
-    input   [31:0]  stream_in_A;
-    input   [31:0]  stream_in_B;
+    input signed  [31:0]  stream_in_A;
+    input signed  [31:0]  stream_in_B;
 
     // --- 輸出埠 ---
     output reg          is_busy;
     output reg          is_block_done;
     output      [15:0]  C_write_idx;
-    output reg [127:0]  C_write_data;
+    output reg signed [127:0]  C_write_data;
 
     // --- 內部連線 & 暫存器 ---
-    wire [((ARRAY_DIM-1) * ARRAY_DIM * 8)-1:0] internal_conns_A; 
-    wire [((ARRAY_DIM-1) * ARRAY_DIM * 8)-1:0] internal_conns_B; 
-    wire [511:0]                              all_pe_results; 
-
+    wire signed [((ARRAY_DIM-1) * ARRAY_DIM * 8)-1:0] internal_conns_A; 
+    wire signed [((ARRAY_DIM-1) * ARRAY_DIM * 8)-1:0] internal_conns_B; 
+    wire signed [511:0]                              all_pe_results; 
+    wire [3:0] compute_en_H [3:0];
     reg signed [15:0] cycle_counter;
     reg signed [15:0] c_addr_ptr;     
     reg        [15:0] result_read_en; 
@@ -56,6 +56,10 @@ module sysArray(
     // 將內部地址指標連接到輸出埠
     assign C_write_idx = c_addr_ptr;
 
+    wire array_start_pulse;
+    // 這裡的邏輯需要確保它只在數據流動的 K_dim 週期內為高電位。
+    // 由於 sysArray 已經有一個 cycle_counter，我們可以讓一個簡單的使能信號進入 PE 陣列。
+    assign array_start_pulse = (cycle_counter > 1) && (cycle_counter <= K_dim+12);
     // --- 邏輯實作 ---
 
     // 這個 generate 區塊負責生成並連接 4x4 的 processElement 陣列
@@ -73,7 +77,9 @@ module sysArray(
             .read_en(result_read_en[0]),
             .stream_out_A(internal_conns_A[7:0]),
             .stream_out_B(internal_conns_B[7:0]),
-            .pe_result(all_pe_results[127:96])
+            .pe_result(all_pe_results[127:96]),
+            .compute_en_in(array_start_pulse),           // <--- 修正: 接收全局啟動脈衝
+            .compute_en_out(compute_en_H[0][0])          // <--- 修正: 傳給 PE_0_1
         );
 
         // -- PE (Row 0, Col 1) --
@@ -84,7 +90,9 @@ module sysArray(
             .read_en(result_read_en[1]),
             .stream_out_A(internal_conns_A[15:8]),
             .stream_out_B(internal_conns_B[15:8]),
-            .pe_result(all_pe_results[95:64])
+            .pe_result(all_pe_results[95:64]),
+            .compute_en_in(compute_en_H[0][0]),          // <--- 修正: 接收 PE_0_0 傳來的信號
+            .compute_en_out(compute_en_H[0][1])          // <--- 修正: 傳給 PE_0_2
         );
 
         // -- PE (Row 0, Col 2) --
@@ -95,7 +103,9 @@ module sysArray(
             .read_en(result_read_en[2]),
             .stream_out_A(internal_conns_A[23:16]),
             .stream_out_B(internal_conns_B[23:16]),
-            .pe_result(all_pe_results[63:32])
+            .pe_result(all_pe_results[63:32]),
+            .compute_en_in(compute_en_H[0][1]),          // <--- 修正: 接收 PE_0_1 傳來的信號
+            .compute_en_out(compute_en_H[0][2])          // <--- 修正: 傳給 PE_0_3
         );
 
         // -- PE (Row 0, Col 3) --
@@ -106,7 +116,9 @@ module sysArray(
             .read_en(result_read_en[3]),
             .stream_out_A(), // 右邊界，無水平輸出
             .stream_out_B(internal_conns_B[31:24]),
-            .pe_result(all_pe_results[31:0])
+            .pe_result(all_pe_results[31:0]),
+            .compute_en_in(compute_en_H[0][2]),          // <--- 修正: 接收 PE_0_2 傳來的信號
+            .compute_en_out(compute_en_H[0][3])          // <--- 修正: 邊界輸出 (未使用)
         );
 
         //----------------------------------------------------------------------
@@ -121,7 +133,9 @@ module sysArray(
             .read_en(result_read_en[4]),
             .stream_out_A(internal_conns_A[31:24]),
             .stream_out_B(internal_conns_B[39:32]),
-            .pe_result(all_pe_results[255:224])
+            .pe_result(all_pe_results[255:224]),
+            .compute_en_in(compute_en_H[0][0]),           // <--- 修正: 接收全局啟動脈衝
+            .compute_en_out(compute_en_H[1][0])          // <--- 修正: 傳給 PE_1_1
         );
 
         // -- PE (Row 1, Col 1) --
@@ -132,7 +146,9 @@ module sysArray(
             .read_en(result_read_en[5]),
             .stream_out_A(internal_conns_A[39:32]),
             .stream_out_B(internal_conns_B[47:40]),
-            .pe_result(all_pe_results[223:192])
+            .pe_result(all_pe_results[223:192]),
+            .compute_en_in(compute_en_H[1][0]),          // <--- 修正: 接收 PE_1_0 傳來的信號
+            .compute_en_out(compute_en_H[1][1])          // <--- 修正: 傳給 PE_1_2
         );
 
         // -- PE (Row 1, Col 2) --
@@ -143,7 +159,9 @@ module sysArray(
             .read_en(result_read_en[6]),
             .stream_out_A(internal_conns_A[47:40]),
             .stream_out_B(internal_conns_B[55:48]),
-            .pe_result(all_pe_results[191:160])
+            .pe_result(all_pe_results[191:160]),
+            .compute_en_in(compute_en_H[1][1]),          // <--- 修正: 接收 PE_1_1 傳來的信號
+            .compute_en_out(compute_en_H[1][2])          // <--- 修正: 傳給 PE_1_3
         );
 
         // -- PE (Row 1, Col 3) --
@@ -154,7 +172,9 @@ module sysArray(
             .read_en(result_read_en[7]),
             .stream_out_A(), // 右邊界，無水平輸出
             .stream_out_B(internal_conns_B[63:56]),
-            .pe_result(all_pe_results[159:128])
+            .pe_result(all_pe_results[159:128]),
+            .compute_en_in(compute_en_H[1][2]),          // <--- 修正: 接收 PE_1_2 傳來的信號
+            .compute_en_out(compute_en_H[1][3])          // <--- 修正: 邊界輸出 (未使用)
         );
 
         //----------------------------------------------------------------------
@@ -169,7 +189,9 @@ module sysArray(
             .read_en(result_read_en[8]),
             .stream_out_A(internal_conns_A[55:48]),
             .stream_out_B(internal_conns_B[71:64]),
-            .pe_result(all_pe_results[383:352])
+            .pe_result(all_pe_results[383:352]),
+            .compute_en_in(compute_en_H[1][0]),           // <--- 修正: 接收全局啟動脈衝
+            .compute_en_out(compute_en_H[2][0])          // <--- 修正: 傳給 PE_2_1
         );
 
         // -- PE (Row 2, Col 1) --
@@ -180,7 +202,9 @@ module sysArray(
             .read_en(result_read_en[9]),
             .stream_out_A(internal_conns_A[63:56]),
             .stream_out_B(internal_conns_B[79:72]),
-            .pe_result(all_pe_results[351:320])
+            .pe_result(all_pe_results[351:320]),
+            .compute_en_in(compute_en_H[2][0]),          // <--- 修正: 接收 PE_2_0 傳來的信號
+            .compute_en_out(compute_en_H[2][1])          // <--- 修正: 傳給 PE_2_2
         );
 
         // -- PE (Row 2, Col 2) --
@@ -191,7 +215,9 @@ module sysArray(
             .read_en(result_read_en[10]),
             .stream_out_A(internal_conns_A[71:64]),
             .stream_out_B(internal_conns_B[87:80]),
-            .pe_result(all_pe_results[319:288])
+            .pe_result(all_pe_results[319:288]),
+            .compute_en_in(compute_en_H[2][1]),          // <--- 修正: 接收 PE_2_1 傳來的信號
+            .compute_en_out(compute_en_H[2][2])          // <--- 修正: 傳給 PE_2_3
         );
 
         // -- PE (Row 2, Col 3) --
@@ -202,7 +228,9 @@ module sysArray(
             .read_en(result_read_en[11]),
             .stream_out_A(), // 右邊界，無水平輸出
             .stream_out_B(internal_conns_B[95:88]),
-            .pe_result(all_pe_results[287:256])
+            .pe_result(all_pe_results[287:256]),
+            .compute_en_in(compute_en_H[2][2]),          // <--- 修正: 接收 PE_2_2 傳來的信號
+            .compute_en_out(compute_en_H[2][3])          // <--- 修正: 邊界輸出 (未使用)
         );
 
         //----------------------------------------------------------------------
@@ -217,7 +245,9 @@ module sysArray(
             .read_en(result_read_en[12]),
             .stream_out_A(internal_conns_A[79:72]),
             .stream_out_B(), // 底邊界，無垂直輸出
-            .pe_result(all_pe_results[511:480])
+            .pe_result(all_pe_results[511:480]),
+            .compute_en_in(compute_en_H[2][0]),           // <--- 修正: 接收全局啟動脈衝
+            .compute_en_out(compute_en_H[3][0])          // <--- 修正: 傳給 PE_3_1
         );
 
         // -- PE (Row 3, Col 1) --
@@ -228,7 +258,9 @@ module sysArray(
             .read_en(result_read_en[13]),
             .stream_out_A(internal_conns_A[87:80]),
             .stream_out_B(), // 底邊界，無垂直輸出
-            .pe_result(all_pe_results[479:448])
+            .pe_result(all_pe_results[479:448]),
+            .compute_en_in(compute_en_H[3][0]),          // <--- 修正: 接收 PE_3_0 傳來的信號
+            .compute_en_out(compute_en_H[3][1])          // <--- 修正: 傳給 PE_3_2
         );
 
         // -- PE (Row 3, Col 2) --
@@ -239,7 +271,9 @@ module sysArray(
             .read_en(result_read_en[14]),
             .stream_out_A(internal_conns_A[95:88]),
             .stream_out_B(), // 底邊界，無垂直輸出
-            .pe_result(all_pe_results[447:416])
+            .pe_result(all_pe_results[447:416]),
+            .compute_en_in(compute_en_H[3][1]),          // <--- 修正: 接收 PE_3_1 傳來的信號
+            .compute_en_out(compute_en_H[3][2])          // <--- 修正: 傳給 PE_3_3
         );
 
         // -- PE (Row 3, Col 3) --
@@ -250,7 +284,9 @@ module sysArray(
             .read_en(result_read_en[15]),
             .stream_out_A(), // 右邊界，無水平輸出
             .stream_out_B(), // 底邊界，無垂直輸出
-            .pe_result(all_pe_results[415:384])
+            .pe_result(all_pe_results[415:384]),
+            .compute_en_in(compute_en_H[3][2]),          // <--- 修正: 接收 PE_3_2 傳來的信號
+            .compute_en_out(compute_en_H[3][3])          // <--- 修正: 邊界輸出 (未使用)
         );
     endgenerate
 

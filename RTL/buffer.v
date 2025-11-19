@@ -26,14 +26,14 @@ module buffer(
     input           rst_n;
     input           is_busy;
     input           is_block_done;
-    input   [31:0]  data_in;
+    input signed [31:0]  data_in;
 
     // --- 輸出埠 ---
-    output  [31:0]  data_out;
+    output signed [31:0]  data_out;
 
     // --- 內部連線 ---
     // 這些 wire 負責在 bufferElement 實例之間傳遞資料。
-    wire [((WORD_WIDTH-1) * WORD_WIDTH * 8)-1:0] internal_connections; 
+    wire signed [((WORD_WIDTH-1) * WORD_WIDTH * 8)-1:0] internal_connections; 
 
     // --- 邏輯實作 ---
     generate
