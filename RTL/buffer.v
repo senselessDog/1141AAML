@@ -36,32 +36,86 @@ module buffer(
     wire [((WORD_WIDTH-1) * WORD_WIDTH * 8)-1:0] internal_connections; 
 
     // --- 邏輯實作 ---
-
-    // 這個 generate 區塊負責生成 4x4 的 bufferElement 實例網絡。
-    // 複雜的 'if-else' 結構定義了資料歪斜的路徑。
-    genvar row, col;
     generate
-        for(row=0; row<4; row=row+1) begin
-            for(col=0; col<4; col=col+1) begin
-                // 'be' 是 bufferElement 模組的一個實例。
-                // 我們將更名後的控制信號傳遞給每一個元件。
-                if(row+col == 3) begin // 這是資料輸入的主對角線
-                    if(col == 3) begin
-                        bufferElement be(.clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), .data_in(data_in[(col+1)*8-1:col*8]), .data_out(data_out[31:24]));
-                    end else begin
-                        bufferElement be(.clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), .data_in(data_in[(col+1)*8-1:col*8]), .data_out(internal_connections[(3*row+col+1)*8-1:(3*row+col)*8]));
-                    end
-                end else begin // 非對角線上的元件負責傳遞資料
-                    if(col == 3) begin
-                        bufferElement be(.clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), .data_in(internal_connections[(3*row+col)*8-1:(3*row+col-1)*8]), .data_out(data_out[(3-row+1)*8-1:(3-row)*8]));
-                    end else if(col == 0) begin
-                        bufferElement be(.clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), .data_in(8'd0), .data_out(internal_connections[(3*row+col+1)*8-1:(3*row+col)*8]));
-                    end else begin
-                        bufferElement be(.clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), .data_in(internal_connections[(3*row+col)*8-1:(3*row+col-1)*8]), .data_out(internal_connections[(3*row+col+1)*8-1:(3*row+col)*8]));
-                    end
-                end
-            end
-        end
+        //----------------------------------------------------------------------
+        // Row 0
+        //----------------------------------------------------------------------
+        // be(0,0): 來自左邊界的 0，傳給右邊
+        bufferElement be_0_0 (.clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), 
+            .data_in(8'd0), 
+            .data_out(internal_connections[7:0]));
+        // be(0,1): 來自左邊，傳給右邊
+        bufferElement be_0_1 (.clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), 
+            .data_in(internal_connections[7:0]), 
+            .data_out(internal_connections[15:8]));
+        // be(0,2): 來自左邊，傳給右邊
+        bufferElement be_0_2 (.clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), 
+            .data_in(internal_connections[15:8]), 
+            .data_out(internal_connections[23:16]));
+        // be(0,3): *** 對角線 *** 接收外部輸入，輸出到最終 data_out
+        bufferElement be_0_3 (.clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), 
+            .data_in(data_in[31:24]), 
+            .data_out(data_out[31:24]));
+
+        //----------------------------------------------------------------------
+        // Row 1
+        //----------------------------------------------------------------------
+        // be(1,0): 來自左邊界的 0，傳給右邊
+        bufferElement be_1_0 (.clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), 
+            .data_in(8'd0), 
+            .data_out(internal_connections[31:24]));
+        // be(1,1): 來自左邊，傳給右邊
+        bufferElement be_1_1 (.clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), 
+            .data_in(internal_connections[31:24]), 
+            .data_out(internal_connections[39:32]));
+        // be(1,2): *** 對角線 *** 接收外部輸入，傳給右邊
+        bufferElement be_1_2 (.clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), 
+            .data_in(data_in[23:16]), 
+            .data_out(internal_connections[47:40]));
+        // be(1,3): 來自左邊，輸出到最終 data_out
+        bufferElement be_1_3 (.clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), 
+            .data_in(internal_connections[47:40]), 
+            .data_out(data_out[23:16]));
+
+        //----------------------------------------------------------------------
+        // Row 2
+        //----------------------------------------------------------------------
+        // be(2,0): 來自左邊界的 0，傳給右邊
+        bufferElement be_2_0 (.clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), 
+            .data_in(8'd0), 
+            .data_out(internal_connections[55:48]));
+        // be(2,1): *** 對角線 *** 接收外部輸入，傳給右邊
+        bufferElement be_2_1 (.clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), 
+            .data_in(data_in[15:8]), 
+            .data_out(internal_connections[63:56]));
+        // be(2,2): 來自左邊，傳給右邊
+        bufferElement be_2_2 (.clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), 
+            .data_in(internal_connections[63:56]), 
+            .data_out(internal_connections[71:64]));
+        // be(2,3): 來自左邊，輸出到最終 data_out
+        bufferElement be_2_3 (.clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), 
+            .data_in(internal_connections[71:64]), 
+            .data_out(data_out[15:8]));
+
+        //----------------------------------------------------------------------
+        // Row 3
+        //----------------------------------------------------------------------
+        // be(3,0): *** 對角線 *** 接收外部輸入，傳給右邊
+        bufferElement be_3_0 (.clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), 
+            .data_in(data_in[7:0]), 
+            .data_out(internal_connections[79:72]));
+        // be(3,1): 來自左邊，傳給右邊
+        bufferElement be_3_1 (.clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), 
+            .data_in(internal_connections[79:72]), 
+            .data_out(internal_connections[87:80]));
+        // be(3,2): 來自左邊，傳給右邊
+        bufferElement be_3_2 (.clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), 
+            .data_in(internal_connections[87:80]), 
+            .data_out(internal_connections[95:88]));
+        // be(3,3): 來自左邊，輸出到最終 data_out
+        bufferElement be_3_3 (.clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), 
+            .data_in(internal_connections[95:88]), 
+            .data_out(data_out[7:0]));
     endgenerate
 
 endmodule

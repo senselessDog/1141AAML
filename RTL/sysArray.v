@@ -61,34 +61,197 @@ module sysArray(
     // 這個 generate 區塊負責生成並連接 4x4 的 processElement 陣列
     genvar row, col;
     generate
-        for(row=0; row<4; row=row+1) begin
-            for(col=0; col<4; col=col+1) begin
-                // 實例化 processElement，並連接所有已更名的埠
-                if(row > 0 && row < 3 && col > 0 && col < 3) begin
-                    processElement pe(.row_idx(row[2:0]), .col_idx(col[2:0]), .clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), .stream_in_A(internal_conns_A[(3*row+col)*8-1:(3*row+col-1)*8]), .stream_in_B(internal_conns_B[(4*row+col-3)*8-1:(4*row+col-4)*8]), .read_en(result_read_en[4*row+col]), .stream_out_A(internal_conns_A[(3*row+col+1)*8-1:(3*row+col)*8]), .stream_out_B(internal_conns_B[(4*row+col+1)*8-1:(4*row+col)*8]), .pe_result(all_pe_results[128*row-32*col+127:128*row-32*col+96]));
-                end else if(row == 0) begin
-                    if(col == 0) begin
-                        processElement pe(.row_idx(row[2:0]), .col_idx(col[2:0]), .clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), .stream_in_A(stream_in_A[31:24]), .stream_in_B(stream_in_B[31:24]), .read_en(result_read_en[4*row+col]), .stream_out_A(internal_conns_A[(3*row+col+1)*8-1:(3*row+col)*8]), .stream_out_B(internal_conns_B[(4*row+col+1)*8-1:(4*row+col)*8]), .pe_result(all_pe_results[128*row-32*col+127:128*row-32*col+96]));
-                    end else if(col == 3) begin
-                        processElement pe(.row_idx(row[2:0]), .col_idx(col[2:0]), .clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), .stream_in_A(internal_conns_A[(3*row+col)*8-1:(3*row+col-1)*8]), .stream_in_B(stream_in_B[7:0]), .read_en(result_read_en[4*row+col]), .stream_out_A(), .stream_out_B(internal_conns_B[(4*row+col+1)*8-1:(4*row+col)*8]), .pe_result(all_pe_results[128*row-32*col+127:128*row-32*col+96]));
-                    end else begin
-                        processElement pe(.row_idx(row[2:0]), .col_idx(col[2:0]), .clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), .stream_in_A(internal_conns_A[(3*row+col)*8-1:(3*row+col-1)*8]), .stream_in_B(stream_in_B[(3-col+1)*8-1:(3-col)*8]), .read_en(result_read_en[4*row+col]), .stream_out_A(internal_conns_A[(3*row+col+1)*8-1:(3*row+col)*8]), .stream_out_B(internal_conns_B[(4*row+col+1)*8-1:(4*row+col)*8]), .pe_result(all_pe_results[128*row-32*col+127:128*row-32*col+96]));
-                    end
-                end else if(row == 3) begin
-                    if(col == 0) begin
-                        processElement pe(.row_idx(row[2:0]), .col_idx(col[2:0]), .clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), .stream_in_A(stream_in_A[7:0]), .stream_in_B(internal_conns_B[(4*row+col-3)*8-1:(4*row+col-4)*8]), .read_en(result_read_en[4*row+col]), .stream_out_A(internal_conns_A[(3*row+col+1)*8-1:(3*row+col)*8]), .stream_out_B(), .pe_result(all_pe_results[128*row-32*col+127:128*row-32*col+96]));
-                    end else if(col == 3) begin
-                        processElement pe(.row_idx(row[2:0]), .col_idx(col[2:0]), .clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), .stream_in_A(internal_conns_A[(3*row+col)*8-1:(3*row+col-1)*8]), .stream_in_B(internal_conns_B[(4*row+col-3)*8-1:(4*row+col-4)*8]), .read_en(result_read_en[4*row+col]), .stream_out_A(), .stream_out_B(), .pe_result(all_pe_results[128*row-32*col+127:128*row-32*col+96]));
-                    end else begin
-                        processElement pe(.row_idx(row[2:0]), .col_idx(col[2:0]), .clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), .stream_in_A(internal_conns_A[(3*row+col)*8-1:(3*row+col-1)*8]), .stream_in_B(internal_conns_B[(4*row+col-3)*8-1:(4*row+col-4)*8]), .read_en(result_read_en[4*row+col]), .stream_out_A(internal_conns_A[(3*row+col+1)*8-1:(3*row+col)*8]), .stream_out_B(), .pe_result(all_pe_results[128*row-32*col+127:128*row-32*col+96]));
-                    end
-                end else if(col == 0) begin
-                    processElement pe(.row_idx(row[2:0]), .col_idx(col[2:0]), .clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), .stream_in_A(stream_in_A[(3-row+1)*8-1:(3-row)*8]), .stream_in_B(internal_conns_B[(4*row+col-3)*8-1:(4*row+col-4)*8]), .read_en(result_read_en[4*row+col]), .stream_out_A(internal_conns_A[(3*row+col+1)*8-1:(3*row+col)*8]), .stream_out_B(internal_conns_B[(4*row+col+1)*8-1:(4*row+col)*8]), .pe_result(all_pe_results[128*row-32*col+127:128*row-32*col+96]));
-                end else begin
-                    processElement pe(.row_idx(row[2:0]), .col_idx(col[2:0]), .clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), .stream_in_A(internal_conns_A[(3*row+col)*8-1:(3*row+col-1)*8]), .stream_in_B(internal_conns_B[(4*row+col-3)*8-1:(4*row+col-4)*8]), .read_en(result_read_en[4*row+col]), .stream_out_A(), .stream_out_B(internal_conns_B[(4*row+col+1)*8-1:(4*row+col)*8]), .pe_result(all_pe_results[128*row-32*col+127:128*row-32*col+96]));
-                end
-            end
-        end
+        //----------------------------------------------------------------------
+        // Row 0: 頂部邊界的處理單元
+        //----------------------------------------------------------------------
+
+        // -- PE (Row 0, Col 0) --
+        processElement pe_0_0 (
+            .row_idx(3'd0), .col_idx(3'd0), .clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), 
+            .stream_in_A(stream_in_A[31:24]),
+            .stream_in_B(stream_in_B[31:24]),
+            .read_en(result_read_en[0]),
+            .stream_out_A(internal_conns_A[7:0]),
+            .stream_out_B(internal_conns_B[7:0]),
+            .pe_result(all_pe_results[127:96])
+        );
+
+        // -- PE (Row 0, Col 1) --
+        processElement pe_0_1 (
+            .row_idx(3'd0), .col_idx(3'd1), .clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), 
+            .stream_in_A(internal_conns_A[7:0]),
+            .stream_in_B(stream_in_B[23:16]),
+            .read_en(result_read_en[1]),
+            .stream_out_A(internal_conns_A[15:8]),
+            .stream_out_B(internal_conns_B[15:8]),
+            .pe_result(all_pe_results[95:64])
+        );
+
+        // -- PE (Row 0, Col 2) --
+        processElement pe_0_2 (
+            .row_idx(3'd0), .col_idx(3'd2), .clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), 
+            .stream_in_A(internal_conns_A[15:8]),
+            .stream_in_B(stream_in_B[15:8]),
+            .read_en(result_read_en[2]),
+            .stream_out_A(internal_conns_A[23:16]),
+            .stream_out_B(internal_conns_B[23:16]),
+            .pe_result(all_pe_results[63:32])
+        );
+
+        // -- PE (Row 0, Col 3) --
+        processElement pe_0_3 (
+            .row_idx(3'd0), .col_idx(3'd3), .clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), 
+            .stream_in_A(internal_conns_A[23:16]),
+            .stream_in_B(stream_in_B[7:0]),
+            .read_en(result_read_en[3]),
+            .stream_out_A(), // 右邊界，無水平輸出
+            .stream_out_B(internal_conns_B[31:24]),
+            .pe_result(all_pe_results[31:0])
+        );
+
+        //----------------------------------------------------------------------
+        // Row 1: 中間部分的處理單元
+        //----------------------------------------------------------------------
+
+        // -- PE (Row 1, Col 0) --
+        processElement pe_1_0 (
+            .row_idx(3'd1), .col_idx(3'd0), .clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), 
+            .stream_in_A(stream_in_A[23:16]),
+            .stream_in_B(internal_conns_B[7:0]),
+            .read_en(result_read_en[4]),
+            .stream_out_A(internal_conns_A[31:24]),
+            .stream_out_B(internal_conns_B[39:32]),
+            .pe_result(all_pe_results[255:224])
+        );
+
+        // -- PE (Row 1, Col 1) --
+        processElement pe_1_1 (
+            .row_idx(3'd1), .col_idx(3'd1), .clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), 
+            .stream_in_A(internal_conns_A[31:24]),
+            .stream_in_B(internal_conns_B[15:8]),
+            .read_en(result_read_en[5]),
+            .stream_out_A(internal_conns_A[39:32]),
+            .stream_out_B(internal_conns_B[47:40]),
+            .pe_result(all_pe_results[223:192])
+        );
+
+        // -- PE (Row 1, Col 2) --
+        processElement pe_1_2 (
+            .row_idx(3'd1), .col_idx(3'd2), .clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), 
+            .stream_in_A(internal_conns_A[39:32]),
+            .stream_in_B(internal_conns_B[23:16]),
+            .read_en(result_read_en[6]),
+            .stream_out_A(internal_conns_A[47:40]),
+            .stream_out_B(internal_conns_B[55:48]),
+            .pe_result(all_pe_results[191:160])
+        );
+
+        // -- PE (Row 1, Col 3) --
+        processElement pe_1_3 (
+            .row_idx(3'd1), .col_idx(3'd3), .clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), 
+            .stream_in_A(internal_conns_A[47:40]),
+            .stream_in_B(internal_conns_B[31:24]),
+            .read_en(result_read_en[7]),
+            .stream_out_A(), // 右邊界，無水平輸出
+            .stream_out_B(internal_conns_B[63:56]),
+            .pe_result(all_pe_results[159:128])
+        );
+
+        //----------------------------------------------------------------------
+        // Row 2: 中間部分的處理單元
+        //----------------------------------------------------------------------
+
+        // -- PE (Row 2, Col 0) --
+        processElement pe_2_0 (
+            .row_idx(3'd2), .col_idx(3'd0), .clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), 
+            .stream_in_A(stream_in_A[15:8]),
+            .stream_in_B(internal_conns_B[39:32]),
+            .read_en(result_read_en[8]),
+            .stream_out_A(internal_conns_A[55:48]),
+            .stream_out_B(internal_conns_B[71:64]),
+            .pe_result(all_pe_results[383:352])
+        );
+
+        // -- PE (Row 2, Col 1) --
+        processElement pe_2_1 (
+            .row_idx(3'd2), .col_idx(3'd1), .clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), 
+            .stream_in_A(internal_conns_A[55:48]),
+            .stream_in_B(internal_conns_B[47:40]),
+            .read_en(result_read_en[9]),
+            .stream_out_A(internal_conns_A[63:56]),
+            .stream_out_B(internal_conns_B[79:72]),
+            .pe_result(all_pe_results[351:320])
+        );
+
+        // -- PE (Row 2, Col 2) --
+        processElement pe_2_2 (
+            .row_idx(3'd2), .col_idx(3'd2), .clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), 
+            .stream_in_A(internal_conns_A[63:56]),
+            .stream_in_B(internal_conns_B[55:48]),
+            .read_en(result_read_en[10]),
+            .stream_out_A(internal_conns_A[71:64]),
+            .stream_out_B(internal_conns_B[87:80]),
+            .pe_result(all_pe_results[319:288])
+        );
+
+        // -- PE (Row 2, Col 3) --
+        processElement pe_2_3 (
+            .row_idx(3'd2), .col_idx(3'd3), .clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), 
+            .stream_in_A(internal_conns_A[71:64]),
+            .stream_in_B(internal_conns_B[63:56]),
+            .read_en(result_read_en[11]),
+            .stream_out_A(), // 右邊界，無水平輸出
+            .stream_out_B(internal_conns_B[95:88]),
+            .pe_result(all_pe_results[287:256])
+        );
+
+        //----------------------------------------------------------------------
+        // Row 3: 底部邊界的處理單元
+        //----------------------------------------------------------------------
+
+        // -- PE (Row 3, Col 0) --
+        processElement pe_3_0 (
+            .row_idx(3'd3), .col_idx(3'd0), .clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), 
+            .stream_in_A(stream_in_A[7:0]),
+            .stream_in_B(internal_conns_B[71:64]),
+            .read_en(result_read_en[12]),
+            .stream_out_A(internal_conns_A[79:72]),
+            .stream_out_B(), // 底邊界，無垂直輸出
+            .pe_result(all_pe_results[511:480])
+        );
+
+        // -- PE (Row 3, Col 1) --
+        processElement pe_3_1 (
+            .row_idx(3'd3), .col_idx(3'd1), .clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), 
+            .stream_in_A(internal_conns_A[79:72]),
+            .stream_in_B(internal_conns_B[79:72]),
+            .read_en(result_read_en[13]),
+            .stream_out_A(internal_conns_A[87:80]),
+            .stream_out_B(), // 底邊界，無垂直輸出
+            .pe_result(all_pe_results[479:448])
+        );
+
+        // -- PE (Row 3, Col 2) --
+        processElement pe_3_2 (
+            .row_idx(3'd3), .col_idx(3'd2), .clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), 
+            .stream_in_A(internal_conns_A[87:80]),
+            .stream_in_B(internal_conns_B[87:80]),
+            .read_en(result_read_en[14]),
+            .stream_out_A(internal_conns_A[95:88]),
+            .stream_out_B(), // 底邊界，無垂直輸出
+            .pe_result(all_pe_results[447:416])
+        );
+
+        // -- PE (Row 3, Col 3) --
+        processElement pe_3_3 (
+            .row_idx(3'd3), .col_idx(3'd3), .clk(clk), .rst_n(rst_n), .is_busy(is_busy), .is_block_done(is_block_done), 
+            .stream_in_A(internal_conns_A[95:88]),
+            .stream_in_B(internal_conns_B[95:88]),
+            .read_en(result_read_en[15]),
+            .stream_out_A(), // 右邊界，無水平輸出
+            .stream_out_B(), // 底邊界，無垂直輸出
+            .pe_result(all_pe_results[415:384])
+        );
     endgenerate
 
     always @(negedge rst_n or negedge is_busy) begin
