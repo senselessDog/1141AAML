@@ -59,7 +59,7 @@ module sysArray(
     wire array_start_pulse;
     // 這裡的邏輯需要確保它只在數據流動的 K_dim 週期內為高電位。
     // 由於 sysArray 已經有一個 cycle_counter，我們可以讓一個簡單的使能信號進入 PE 陣列。
-    assign array_start_pulse = (cycle_counter > 1) && (cycle_counter <= K_dim+12);
+    assign array_start_pulse = (cycle_counter > 0) && (cycle_counter <= K_dim+12);
     // --- 邏輯實作 ---
 
     // 這個 generate 區塊負責生成並連接 4x4 的 processElement 陣列

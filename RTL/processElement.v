@@ -50,6 +50,7 @@ module processElement(
     reg signed [7:0]   pipe_reg_A;
     reg signed [7:0]   pipe_reg_B;
     reg compute_en_pipe;
+    reg first_use;
     // --- 邏輯實作 ---
     always @(negedge clk) begin
         compute_en_pipe <= compute_en_in;
@@ -62,11 +63,16 @@ module processElement(
     always @(negedge rst_n or negedge is_busy or posedge is_block_done) begin
         accumulator = 32'd0;
         product_reg = 32'd0;
+        first_use =1;
     end
 
     // 這是主要的運算邏輯。
     always @(negedge clk) begin
-        if(compute_en_pipe) begin 
+        if(compute_en_pipe) begin
+            if (first_use) begin
+                first_use <= 0;
+                repeat(1) @(negedge clk);
+            end
             product_reg = $signed(stream_in_A) * $signed(stream_in_B);
             accumulator <= $signed(accumulator) + $signed(product_reg);
             pipe_reg_A  <= stream_in_A;
