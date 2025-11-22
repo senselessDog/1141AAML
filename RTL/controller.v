@@ -51,19 +51,19 @@ module controller(
 
     // 這個區塊負責在一個新的矩陣乘法任務開始時，初始化控制器。
     always @(negedge rst_n or negedge is_busy) begin
-        if(is_finished >= 0) begin
-            repeat(10) @(negedge clk);
-        end else begin
-            repeat(3) @(negedge clk);
-        end
+        // if(is_finished >= 0) begin
+        //     repeat(10) @(negedge clk);
+        // end else begin
+        //     repeat(3) @(negedge clk);
+        // end
         #1
-        is_finished      = 1'b0;
-        addr_ptr_a       = -1;
-        addr_ptr_b       = -1;
-        a_block_total    = $ceil(M_dim/4.0);
-        a_block_current  = 0;
-        b_block_total    = $ceil(N_dim/4.0);
-        b_block_idx      = 0;
+        is_finished      <= 1'b0;
+        addr_ptr_a       <= -1;
+        addr_ptr_b       <= -1;
+        a_block_total    <= (M_dim + 8'd3) >> 2;
+        a_block_current  <= 0;
+        b_block_total    <= (N_dim + 8'd3) >> 2;
+        b_block_idx      <= 0;
     end
 
     // 這個區塊負責處理分塊的切換邏輯，如同一個巢狀迴圈控制器。

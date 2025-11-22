@@ -272,6 +272,56 @@ void do_matmul_num(int test_num) {
         - you may use __asm volatile("NOP") to wait some cycles if unstable.
   */ 
 
+  // Step 1: Write Matrix A data to Global Buffer A
+  // A_arr contains 64 uint32_t values (each holds 4 int8 values)
+  for (uint32_t i = 0; i < 64; i++) {
+    cfu_op0(0, i, A_arr[test_num][i]);  // funct3=0: Write to Buffer A
+  }
+
+  // Step 2: Write Matrix B data to Global Buffer B
+  // B_arr contains 64 uint32_t values (each holds 4 int8 values)
+  for (uint32_t i = 0; i < 64; i++) {
+    cfu_op0(1, i, B_arr[test_num][i]);  // funct3=1: Write to Buffer B
+  }
+
+  // Step 3: Start TPU computation
+  // inputs_0 = {M[15:8], K[7:0]}, inputs_1 = {N[7:0]}
+  uint32_t params = ((uint32_t)M << 8) | K;
+  cfu_op0(2, params, N);  // funct3=2: Start TPU with K=16, M=16, N=16
+  
+  // Step 4: Wait for TPU to finish (poll busy status)
+  uint32_t busy = 1;
+  for (int k = 0; k < 10000; k++) {
+      __asm volatile("nop");
+      // printf("Test TPU busy status: %lu\n", busy);
+  }
+  while (busy) {
+    busy = cfu_op0(3, 0, 0);  // funct3=3: Read busy status
+    printf("TPU busy status: %lu\n", busy);
+  }
+
+  // Step 5: Read results from Global Buffer C
+  // C has 64 entries, each 128-bit (4 x int32)
+  // We need to read 16x16 int32 values
+  for (uint32_t i = 0; i < 64; i++) {
+    // Each entry in Buffer C holds 4 int32 values (128 bits)
+    // Read all 4 parts of the 128-bit value
+    uint32_t c0 = cfu_op0(4, i, 0);  // bits [31:0]
+    uint32_t c1 = cfu_op0(5, i, 0);  // bits [63:32]
+    uint32_t c2 = cfu_op0(6, i, 0);  // bits [95:64]
+    uint32_t c3 = cfu_op0(7, i, 0);  // bits [127:96]
+    
+    // Map to C_arr[row][col]
+    // Each entry i corresponds to 4 consecutive elements
+    uint32_t row = (i * 4) / 16;      // Which row (0-15)
+    uint32_t col_base = (i * 4) % 16;  // Starting column (0, 4, 8, 12)
+    
+    C_arr[row][col_base + 0] = c0;
+    C_arr[row][col_base + 1] = c1;
+    C_arr[row][col_base + 2] = c2;
+    C_arr[row][col_base + 3] = c3;
+  }
+
   // =====================================================
   // DO NOT MODIFY ANYTHING "BELOW" THIS LINE !!
   // =====================================================
