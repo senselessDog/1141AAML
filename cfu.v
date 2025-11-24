@@ -160,6 +160,7 @@ module Cfu
 
   reg [3:0] 	state;
   reg [31:0] 	comp_cnt;
+  //set status
   always@(negedge clk) begin
     if (reset) begin
       state <= S0;
@@ -174,11 +175,7 @@ module Cfu
           end
         end
         S1: begin
-          if (op == 9) begin // Read Buffer A
-            state <= S2;
-          end else if (op == 11) begin //Read Buffer B
-            state <= S5;
-          end else if (op == 14) begin //Read Buffer C0
+          if (op == 14) begin //Read Buffer C0
             state <= S6;
           end else if (op == 15) begin //Read Buffer C1
             state <= S7;
@@ -209,16 +206,32 @@ module Cfu
           state <= S3;
         end
         S6: begin
-          state <= S3;
+          if (rsp_ready) begin
+            state <= S4;
+          end else begin
+            state <= S9;
+          end
         end
         S7: begin
-          state <= S3;
+          if (rsp_ready) begin
+            state <= S4;
+          end else begin
+            state <= S9;
+          end
         end
         S8: begin
-          state <= S3;
+          if (rsp_ready) begin
+            state <= S4;
+          end else begin
+            state <= S9;
+          end
         end
         S9: begin
-          state <= S3;
+          if (rsp_ready) begin
+            state <= S4;
+          end else begin
+            state <= S9;
+          end
         end
         S10: begin
           // state <= S3;
@@ -232,15 +245,13 @@ module Cfu
       endcase
     end
   end
-	
-  // Set output value
+	// Set input and control signals
   always @(posedge clk) begin
     rst_n <= 1'b1;
     case(state)
       S0: begin
         cmd_ready <= 1'b0;
         rsp_valid <= 1'b0;
-        // rst_n <= 1'b1;
         in_valid <= 1'b0;
       end
       S1: begin
@@ -281,20 +292,11 @@ module Cfu
             A_data_in_init <= cmd_payload_inputs_1;
             A_wr_en_init <= 1'b1;
           end
-          7'd9: begin // Read global bufer A
-            A_wr_en_init <= 1'b0;
-            A_index_init <= cmd_payload_inputs_0[ADDR_BITS-1:0];
-          end
           7'd10: begin // Set global bufer B
             A_wr_en_init <= 1'b0;
             B_index_init <= cmd_payload_inputs_0[ADDR_BITS-1:0];
             B_data_in_init <= cmd_payload_inputs_1;
             B_wr_en_init <= 1'b1;
-          end
-          7'd11: begin // Read global bufer B
-            A_wr_en_init <= 1'b0;
-            B_wr_en_init <= 1'b0;
-            B_index_init <= cmd_payload_inputs_0[ADDR_BITS-1:0];
           end
           7'd12: begin // Set in_valid
             A_wr_en_init <= 1'b0;
@@ -324,14 +326,7 @@ module Cfu
           end
         endcase
       end
-      S2: begin // Wait one cycle output buffer A
-        // rst_n <= 1'b1;
-        cmd_ready <= 1'b0;
-        rsp_valid <= 1'b0;
-        rsp_payload_outputs_0 <= A_data_out;
-      end
       S3: begin
-        // rst_n <= 1'b1;
         cmd_ready <= 1'b0;
         rsp_valid <= 1'b1;
       end
@@ -339,41 +334,45 @@ module Cfu
         cmd_ready <= 1'b0;
         rsp_valid <= 1'b0;
       end
-      S5: begin // Wait one cycle output buffer B
-        // rst_n <= 1'b1;
-        cmd_ready <= 1'b0;
-        rsp_valid <= 1'b0;
-        rsp_payload_outputs_0 <= B_data_out;
-      end
       S6: begin // Wait one cycle output buffer C
-        // rst_n <= 1'b1;
         cmd_ready <= 1'b0;
-        rsp_valid <= 1'b0;
-        rsp_payload_outputs_0 <= C_data_out[31:0];
+        rsp_valid <= 1'b1;
       end
       S7: begin // Wait one cycle output buffer C
-        // rst_n <= 1'b1;
         cmd_ready <= 1'b0;
-        rsp_valid <= 1'b0;
-        rsp_payload_outputs_0 <= C_data_out[63:32];
+        rsp_valid <= 1'b1;
       end
       S8: begin // Wait one cycle output buffer C
-        // rst_n <= 1'b1;
         cmd_ready <= 1'b0;
-        rsp_valid <= 1'b0;
-        rsp_payload_outputs_0 <= C_data_out[95:64];
+        rsp_valid <= 1'b1;
       end
       S9: begin // Wait one cycle output buffer C
-        // rst_n <= 1'b1;
         cmd_ready <= 1'b0;
-        rsp_valid <= 1'b0;
-        rsp_payload_outputs_0 <= C_data_out[127:96];
+        rsp_valid <= 1'b1;
       end
       S10: begin // TPU Computing ...
         in_valid <= 1'b0; // in_valid 只需一個 cycle 
         cmd_ready <= 1'b0;
         rsp_valid <= 1'b0; // 先設定為 1，用來確認 TPU 是否還在運算中
-        // rsp_payload_outputs_0 <= busy;
+      end
+    endcase
+  end
+  // Set output value
+  always @(posedge clk) begin
+    case(state)
+      S6: begin // Wait one cycle output buffer C
+        rsp_payload_outputs_0 <= C_data_out[31:0];
+      end
+      S7: begin // Wait one cycle output buffer C
+        rsp_payload_outputs_0 <= C_data_out[63:32];
+      end
+      S8: begin // Wait one cycle output buffer C
+        rsp_payload_outputs_0 <= C_data_out[95:64];
+      end
+      S9: begin // Wait one cycle output buffer C
+        rsp_payload_outputs_0 <= C_data_out[127:96];
+      end
+      S10: begin // TPU Computing ...
         rsp_payload_outputs_0 <= comp_cnt;
       end
     endcase
