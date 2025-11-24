@@ -2,7 +2,7 @@
 `include "pe.v"
 module TPU 
 #(
-    parameter ADDR_BITS=12
+    parameter ADDR_BITS=16
 )
 (
     clk,
@@ -155,9 +155,9 @@ controller ctrl(
     .C_index(C_index),
     .counter_wire(counter)
 );
-initial begin
-        busy = 0;
-end
+// initial begin
+//         busy = 0;
+// end
 endmodule
 
 
@@ -229,7 +229,7 @@ endmodule
 // 原本資料寫入要多開一個 module，但大多的資料都在這，還要另外接線出去，會很麻煩，加上時序也可能造成一些問題，所以直接在這寫
 module controller
 #(
-    parameter ADDR_BITS=12
+    parameter ADDR_BITS=16
 )
 (
     clk,

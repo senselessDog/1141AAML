@@ -276,6 +276,7 @@ void do_matmul_num(int test_num) {
   // A_arr contains 64 uint32_t values (each holds 4 int8 values)
   for (uint32_t i = 0; i < 64; i++) {
     cfu_op0(0, i, A_arr[test_num][i]);  // funct3=0: Write to Buffer A
+    // printf("Wrote A[%lu]: %08lx\n", i, A_arr[test_num][i]);
   }
 
   // Step 2: Write Matrix B data to Global Buffer B
@@ -291,10 +292,6 @@ void do_matmul_num(int test_num) {
   
   // Step 4: Wait for TPU to finish (poll busy status)
   uint32_t busy = 1;
-  for (int k = 0; k < 10000; k++) {
-      __asm volatile("nop");
-      // printf("Test TPU busy status: %lu\n", busy);
-  }
   while (busy) {
     busy = cfu_op0(3, 0, 0);  // funct3=3: Read busy status
     printf("TPU busy status: %lu\n", busy);
@@ -306,16 +303,16 @@ void do_matmul_num(int test_num) {
   for (uint32_t i = 0; i < 64; i++) {
     // Each entry in Buffer C holds 4 int32 values (128 bits)
     // Read all 4 parts of the 128-bit value
-    uint32_t c0 = cfu_op0(4, i, 0);  // bits [31:0]
-    uint32_t c1 = cfu_op0(5, i, 0);  // bits [63:32]
-    uint32_t c2 = cfu_op0(6, i, 0);  // bits [95:64]
-    uint32_t c3 = cfu_op0(7, i, 0);  // bits [127:96]
-    
+    uint32_t c0 = cfu_op0(7, i, 0);  // bits [127:96]
+    uint32_t c1 = cfu_op0(6, i, 0);  // bits [95:64]
+    uint32_t c2 = cfu_op0(5, i, 0);  // bits [63:32]
+    uint32_t c3 = cfu_op0(4, i, 0);  // bits [31:0]
+    printf("Read C[%lu]: %08lx %08lx %08lx %08lx\n", i, c0, c1, c2, c3);
     // Map to C_arr[row][col]
     // Each entry i corresponds to 4 consecutive elements
-    uint32_t row = (i * 4) / 16;      // Which row (0-15)
-    uint32_t col_base = (i * 4) % 16;  // Starting column (0, 4, 8, 12)
-    
+    uint32_t row = i % 16;      // Which row (0-15)
+    uint32_t col_base = (i / 16)*4;  // Starting column (0, 4, 8, 12)
+
     C_arr[row][col_base + 0] = c0;
     C_arr[row][col_base + 1] = c1;
     C_arr[row][col_base + 2] = c2;
