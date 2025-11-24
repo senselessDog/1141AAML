@@ -255,43 +255,62 @@ uint32_t error_ct = 0;
 
 
 
+// Define CFU Opcodes for better readability
+#define CFU_RESET       1
+#define CFU_SET_K       2
+#define CFU_SET_M       3
+#define CFU_SET_N       4
+#define CFU_WRITE_A     5
+#define CFU_WRITE_B     6
+#define CFU_START_TPU   7
+#define CFU_READ_C_3    13 // MSB [127:96]
+#define CFU_READ_C_2    12
+#define CFU_READ_C_1    11
+#define CFU_READ_C_0    10 // LSB [31:0]
+
 void do_matmul_num(int test_num) {
-  // place your answer in this array!
-  uint32_t C_arr[16][16];
+    // -----------------------------------------------------
+    // Output Buffer
+    uint32_t C_arr[16][16];
+    // -----------------------------------------------------
 
-  // =====================================================
-  // Implement your design here, 
-  // and DO NOT MODIFY ANYTHING "ABOVE" THIS LINE !!
-  // ===================================================== 
+    // 1. Initialization
+    cfu_op0(CFU_RESET, 0, 0); // Hard Reset (Op 1)
+    cfu_op0(CFU_SET_K, K, 0);
+    cfu_op0(CFU_SET_M, M, 0);
+    cfu_op0(CFU_SET_N, N, 0);
 
-    cfu_op0(1,0,0); // reset
-    cfu_op0(2,K,K); // Set parameter K
-    cfu_op0(4,M,M); // Set parameter M
-    cfu_op0(6,N,N); // Set parameter N
-
-    // set Buffer A
-    for (int index = 0; index < 64; index++) {
-        cfu_op0(8,index,A_arr[test_num][index]); // Read global bufer A
+    // 2. Load Input Data to Global Buffers
+    for (int i = 0; i < 64; i++) {
+        cfu_op0(CFU_WRITE_A, i, A_arr[test_num][i]); 
     }
-    // set Buffer B
-    for (int index = 0; index < 64; index++) {
-        cfu_op0(10,index,B_arr[test_num][index]); // Read global bufer B
+    
+    for (int i = 0; i < 64; i++) {
+        cfu_op0(CFU_WRITE_B, i, B_arr[test_num][i]);
     }
 
-    // Start CFU
-      cfu_op0(12, 0, 0); // reset
+    // 3. Execute TPU Processing
+    // Blocks here until 'busy' signal drops in hardware
+    cfu_op0(CFU_START_TPU, 0, 0); 
 
-     // Get Buffer C
-    int c_index=0;
-    for(int block=0; block<4;block++){ 
-    for (int index = 0; index < 16; index++) {
-      int base = 4*block;
-        C_arr[index][base] = cfu_op0(17, c_index , 0);
-        C_arr[index][base+1] = cfu_op0(16, c_index , 0);
-        C_arr[index][base+2] = cfu_op0(15, c_index , 0);
-        C_arr[index][base+3] = cfu_op0(14, c_index , 0);
-        c_index++;
-    }
+    // 4. Retrieve Results
+    // Note: Buffer C is read in column-stripes of 4 elements.
+    // The hardware returns 128-bit packed data, split into 4 x 32-bit chunks.
+    int buffer_ptr = 0;
+    
+    for (int block = 0; block < 4; block++) {
+        int col_base = 4 * block;
+        
+        for (int row = 0; row < 16; row++) {
+            // Read 128-bit result (4 integers) for this memory address
+            // Order: MSB to LSB based on opcode sequence 13->10
+            C_arr[row][col_base + 0] = cfu_op0(CFU_READ_C_3, buffer_ptr, 0);
+            C_arr[row][col_base + 1] = cfu_op0(CFU_READ_C_2, buffer_ptr, 0);
+            C_arr[row][col_base + 2] = cfu_op0(CFU_READ_C_1, buffer_ptr, 0);
+            C_arr[row][col_base + 3] = cfu_op0(CFU_READ_C_0, buffer_ptr, 0);
+            
+            buffer_ptr++;
+        }
     }
 
   // =====================================================
