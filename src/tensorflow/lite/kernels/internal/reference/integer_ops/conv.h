@@ -1,17 +1,3 @@
-/* Copyright 2019 The TensorFlow Authors. All Rights Reserved.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
-==============================================================================*/
 #ifndef TENSORFLOW_LITE_KERNELS_INTERNAL_REFERENCE_INTEGER_OPS_CONV_H_
 #define TENSORFLOW_LITE_KERNELS_INTERNAL_REFERENCE_INTEGER_OPS_CONV_H_
 #include <cstdio>
@@ -37,18 +23,23 @@ limitations under the License.
 #define CFU_READ_C_1    11
 #define CFU_READ_C_0    10 // LSB
 
+// 除錯開關：設為 1 開啟，0 關閉
+#define ENABLE_DEBUG_PRINT 1
+// 只印出前 N 筆資料，避免洗版
+#define DEBUG_LIMIT 5
+static int debug_print_count = 0;
 // 硬體方塊大小 (Tile Size)
 #define TILE_SIZE 16
 
-#define MAX_ROW_CAPACITY 1024 
-#define MAX_COL_CAPACITY 1024 
-#define MAX_CHANNEL_CAPACITY 1024
+#define MAX_ROW_CAPACITY 128  
+#define MAX_COL_CAPACITY 128  
+#define MAX_CHANNEL_CAPACITY 128
 
-// 使用 "global_" 前綴區分，並放在 namespace 外或專屬 namespace
 namespace im2col_buffers {
     int32_t global_im2col_buffer[MAX_ROW_CAPACITY][MAX_COL_CAPACITY];    // Matrix A
     int32_t global_filter_buffer[MAX_COL_CAPACITY][MAX_CHANNEL_CAPACITY]; // Matrix B
     int32_t global_gemm_output[MAX_ROW_CAPACITY][MAX_CHANNEL_CAPACITY];   // Matrix C
+    int32_t global_filter_sums[MAX_CHANNEL_CAPACITY];
 }
 
 namespace tflite {
@@ -59,14 +50,12 @@ inline int32_t GetPixelWithPadding(
     int batch, int y, int x, int channel, 
     int height, int width, int32_t offset_val) {
     
-    // Boundary check (Zero Padding Logic)
     if (x >= 0 && x < width && y >= 0 && y < height) {
-        // [Important] 這裡直接處理 input_offset
         return data[Offset(shape, batch, y, x, channel)] + offset_val;
     }
-    return 0; // Padding 區域填 0
+    return 0; 
 }
-// Fixed-point per-channel-quantization convolution reference kernel.
+
 inline void ConvPerChannel(
     const ConvParams& params, const int32_t* output_multiplier,
     const int32_t* output_shift, const RuntimeShape& input_shape,
@@ -74,9 +63,11 @@ inline void ConvPerChannel(
     const int8_t* filter_data, const RuntimeShape& bias_shape,
     const int32_t* bias_data, const RuntimeShape& output_shape,
     int8_t* output_data) {
+    
   perf_enable_counter(6);
-  // Get parameters.
-  const int32_t input_offset = params.input_offset;  // r = s(q - Z)
+
+  // ... (Parameters extraction 保持不變) ...
+  const int32_t input_offset = params.input_offset;
   const int stride_width = params.stride_width;
   const int stride_height = params.stride_height;
   const int dilation_width_factor = params.dilation_width_factor;
@@ -84,234 +75,255 @@ inline void ConvPerChannel(
   const int pad_width = params.padding_values.width;
   const int pad_height = params.padding_values.height;
   const int32_t output_offset = params.output_offset;
-
-  // Set min and max value of the output.
   const int32_t output_activation_min = params.quantized_activation_min;
   const int32_t output_activation_max = params.quantized_activation_max;
 
-  // Consistency check.
-  TFLITE_DCHECK_LE(output_activation_min, output_activation_max);
-  TFLITE_DCHECK_EQ(input_shape.DimensionsCount(), 4);
-  TFLITE_DCHECK_EQ(filter_shape.DimensionsCount(), 4);
-  TFLITE_DCHECK_EQ(output_shape.DimensionsCount(), 4);
+  // ... (Dimensions extraction 保持不變) ...
   const int batches = MatchingDim(input_shape, 0, output_shape, 0);
   const int input_depth = input_shape.Dims(3);
   const int output_depth = MatchingDim(filter_shape, 0, output_shape, 3);
-  // if (bias_data) {
-  //   TFLITE_DCHECK_EQ(bias_shape.FlatSize(), output_depth);
-  // }
-
-  // Check dimensions of the tensors.
   const int input_height = input_shape.Dims(1);
   const int input_width = input_shape.Dims(2);
   const int filter_height = filter_shape.Dims(1);
   const int filter_width = filter_shape.Dims(2);
   const int filter_input_depth = filter_shape.Dims(3);
-  // const int groups = input_depth / filter_input_depth;
-  TFLITE_DCHECK_EQ(input_depth % filter_input_depth, 0);
-  // const int filters_per_group = output_depth / groups;
   const int output_height = output_shape.Dims(1);
   const int output_width = output_shape.Dims(2);
 
-  // 計算矩陣維度 (Matrix Dimensions)
-  const int dim_M = output_height * output_width;                 // Total patches
-  const int dim_K = filter_height * filter_width * input_depth;   // Kernel Size
-  const int dim_N = output_depth;                                 // Output Channels
+  const int dim_M = output_height * output_width;                 
+  const int dim_K = filter_height * filter_width * input_depth;   
+  const int dim_N = output_depth;                                 
+
+  
+
+  #if ENABLE_DEBUG_PRINT
+  // 重置 Debug 計數器
+  debug_print_count = 0;
+  printf("\n=== ConvPerChannel Debug Info ===\n");
+  printf("Input Offset: %ld, Output Offset: %ld\n", input_offset, output_offset);
+  printf("Dimensions: M=%d, K=%d, N=%d\n", dim_M, dim_K, dim_N);
+  #endif
+
   for (int batch = 0; batch < batches; ++batch) {
     
     // =================================================================
-    // Phase 1: Filter Packing (Weights -> Matrix B)
-    // 目標: im2col_buffers::global_filter_buffer [K][N]
+    // Phase 1: Filter Packing
     // =================================================================
-    // 使用簡單的迴圈結構，不使用複雜的索引計算
+
     for (int out_c = 0; out_c < output_depth; ++out_c) {
-        int k_iterator = 0; // 自動累加，不用算式
+        int k_iterator = 0;
+        int32_t current_filter_sum = 0; 
+
         for (int fy = 0; fy < filter_height; ++fy) {
             for (int fx = 0; fx < filter_width; ++fx) {
                 for (int ic = 0; ic < filter_input_depth; ++ic) {
-                    
                     int32_t val = filter_data[Offset(filter_shape, out_c, fy, fx, ic)];
-                    
-                    // 填入 Filter Buffer (K x N)
-                    // 注意這裡是 [k][n]，直觀對應
-                    im2col_buffers::global_filter_buffer[k_iterator][out_c] = val;
-                    
-                    k_iterator++;
+                    #if ENABLE_DEBUG_PRINT
+                    if (out_c == 0 && batch == 0) { // 只印第一個 Channel
+                         printf("Filter[%d] read at (y=%d,x=%d,ic=%d): %ld\n", out_c, fy, fx, ic, val);
+                    }
+                    #endif
+                    im2col_buffers::global_filter_buffer[k_iterator++][out_c] = val;
+                    current_filter_sum += val;
                 }
             }
         }
+        im2col_buffers::global_filter_sums[out_c] = current_filter_sum;
+        
+        #if ENABLE_DEBUG_PRINT
+        if (out_c < DEBUG_LIMIT) {
+             printf("Filter[%d] Sum: %ld\n", out_c, current_filter_sum);
+        }
+        #endif
     }
-
     // =================================================================
-    // Phase 2: im2col Transformation (Input -> Matrix A)
-    // 目標: im2col_buffers::global_im2col_buffer [M][K]
+    // Phase 2: im2col Transformation
     // =================================================================
-    int current_im2col_row = 0; // 用 Iterator 取代 row = y * w + x
-
+    int current_im2col_row = 0;
     for (int out_y = 0; out_y < output_height; ++out_y) {
         const int in_y_origin = (out_y * stride_height) - pad_height;
-        
         for (int out_x = 0; out_x < output_width; ++out_x) {
             const int in_x_origin = (out_x * stride_width) - pad_width;
+            int current_im2col_col = 0;
             
-            int current_im2col_col = 0; // 重置 column iterator
-
-            // 掃描 Patch 體積
             for (int fy = 0; fy < filter_height; ++fy) {
                 const int in_y = in_y_origin + dilation_height_factor * fy;
-                
                 for (int fx = 0; fx < filter_width; ++fx) {
                     const int in_x = in_x_origin + dilation_width_factor * fx;
-                    
                     for (int ic = 0; ic < input_depth; ++ic) {
                         
-                        // 呼叫 Helper Function，邏輯清晰
-                        int32_t pixel_val = GetPixelWithPadding(
-                            input_data, input_shape, batch, 
-                            in_y, in_x, ic, 
-                            input_height, input_width, input_offset
-                        );
-
-                        im2col_buffers::global_im2col_buffer[current_im2col_row][current_im2col_col] = pixel_val;
-                        
-                        current_im2col_col++;
+                        int32_t val_to_send;
+                        if (in_x >= 0 && in_x < input_width && in_y >= 0 && in_y < input_height) {
+                             val_to_send = input_data[Offset(input_shape, batch, in_y, in_x, ic)];
+                        } else {
+                             val_to_send = -input_offset;
+                        }
+                        #if ENABLE_DEBUG_PRINT
+                        if (batch == 0 && out_y == 0 && out_x == 0) {
+                            printf("Input read at Pixel[0,0] (in_y=%d, in_x=%d, ic=%d): %ld\n", in_y, in_x, ic, val_to_send);
+                        }
+                        #endif
+                        im2col_buffers::global_im2col_buffer[current_im2col_row][current_im2col_col++] = val_to_send;
                     }
                 }
             }
-            current_im2col_row++; // 完成一個 Patch，移動到下一列
+            current_im2col_row++;
         }
     }
+    
     // =================================================================
-    // Phase 3: Hardware Tiling GEMM (Matrix Mul with CFU)
-    // global_gemm_output = global_im2col_buffer * global_filter_buffer
+    // Phase 3: Hardware Tiling GEMM (含軟體累加)
     // =================================================================
     
-    // Tiling Loop: 切割大矩陣成 16x16 小塊
-    // m 掃描 Output Pixels (Rows of A, Rows of C)
-    for (int m = 0; m < dim_M; m += TILE_SIZE) {
-        // n 掃描 Output Channels (Cols of B, Cols of C)
-        for (int n = 0; n < dim_N; n += TILE_SIZE) {
-            
-            // [HARDWARE STEP 1] Reset TPU for new Output Tile
-            cfu_op0(CFU_RESET, 0, 0); 
-            // 雖然 Lab 說不用處理邊界設定，但為了完整性可以傳送
-            // 這裡假設 TPU 內部固定跑 16x16
-            cfu_op0(CFU_SET_M, TILE_SIZE, 0);
-            cfu_op0(CFU_SET_N, TILE_SIZE, 0);
-            cfu_op0(CFU_SET_K, TILE_SIZE, 0);
+    // 1. 清空 Output Buffer
+    for (int m = 0; m < dim_M; ++m) {
+        for (int n = 0; n < dim_N; ++n) {
+             im2col_buffers::global_gemm_output[m][n] = 0;
+        }
+    }
 
-            // k 掃描 Kernel Depth (Cols of A, Rows of B) - 這是累積方向
+    for (int m = 0; m < dim_M; m += TILE_SIZE) {
+        for (int n = 0; n < dim_N; n += TILE_SIZE) {
             for (int k = 0; k < dim_K; k += TILE_SIZE) {
                 
-                // [HARDWARE STEP 2] Send Input Tile (Matrix A sub-block)
-                // Matrix A 是 [m...m+16][k...k+16]
-                // 每次寫入一個 uint32 (包含 4 個 int8) -> 共寫入 16*16/4 = 64 次
-                // 注意：TPU 測試代碼是用 A_arr[4][64]，暗示每行 4 byte，共 64 行？
-                // 通常 16x16 矩陣有 256 個點。每個點 8 bit。總共 256 bytes = 64 個 uint32。
+                // Hardware Reset
+                cfu_op0(CFU_RESET, 0, 0); 
+                cfu_op0(CFU_SET_M, TILE_SIZE, 0);
+                cfu_op0(CFU_SET_N, TILE_SIZE, 0);
+                cfu_op0(CFU_SET_K, TILE_SIZE, 0);
+                // [Debug] Track packing
+                #if ENABLE_DEBUG_PRINT
+                if (m==0 && n==0 && k==0) printf("--- Sending Tile (0,0) ---\n");
+                #endif
+                // Send Input Tile A
+                for (int i = 0; i < 64; ++i) {
+                    uint32_t packed_val = 0;
+                    int8_t bytes[4]; // For debug print
+                    for (int byte = 0; byte < 4; ++byte) {
+                        int logical_r = m + (i / 4);
+                        int logical_c = k + (i % 4) * 4 + byte; 
+                        int8_t val = 0;
+                        if (logical_r < dim_M && logical_c < dim_K) {
+                            val = (int8_t)im2col_buffers::global_im2col_buffer[logical_r][logical_c];
+                        }
+                        packed_val |= ((uint32_t)((uint8_t)val)) << ((3-byte) * 8);
+                        bytes[byte] = val;
+                    }
+                    cfu_op0(CFU_WRITE_A, i, packed_val);
+                    // [Debug Print]
+                    #if ENABLE_DEBUG_PRINT
+                    if (m==0 && n==0 && k==0 && i < DEBUG_LIMIT) {
+                        printf("A[%d]: %08lX -> [%d, %d, %d, %d]\n", i, packed_val, bytes[0], bytes[1], bytes[2], bytes[3]);
+                    }
+                    #endif
+                }
+
+                // Send Weight Tile B
+                // [HARDWARE STEP 3] Send Weight Tile B (Correct Transpose)
+                // 我們需要送 B 的 Column (沿著 K 軸變化)，但 TPU 會把它當作 Row 存進去
+                // 這樣 TPU 的 Dot Product 就會是 Input_Row * Weight_Column
                 
                 for (int i = 0; i < 64; ++i) {
                     uint32_t packed_val = 0;
-                    // 一個 uint32 塞 4 個 int8 (4個 K 維度)
-                    // 這取決於你的 TPU 設計，假設是 row-major 且 4-byte packed in K dimension
+                    int8_t bytes[4]; // For debug print
                     for (int byte = 0; byte < 4; ++byte) {
-                        // 計算真實座標
-                        // int r = m + (i / 4);     // 第幾列 (0~15)
-                        // int c = k + (i % 4) * 4 + byte; // 第幾行 (每次抓4個) -> 這是假設寫入順序
-
-                        // **如果你的 TPU 寫入順序不同，這裡要調整**
-                        // 依照 functional test，A_arr 是一維 64 長度，
-                        // 這裡最保險的做法是: 模仿 Test Code 的寫入量，確保送 64 次
-                        // 假設 TPU 接收順序是: Row 0 (4 words), Row 1 (4 words)...
+                        // [修正重點] 
+                        // 我們希望 "inner-most" 變化的數值是對應到 K 維度 (logical_r)
+                        // 這樣送進去的 4 個 bytes 才會是 B[0][0], B[1][0], B[2][0], B[3][0] (同一個 Filter, 不同深度)
                         
-                        int logical_r = m + (i / 4); // 0..15
-                        int logical_c = k + (i % 4) * 4 + byte; 
+                        // i 是 0..63, byte 是 0..3
+                        // 我們讓 linear_idx = i * 4 + byte 代表我們正在送第幾個數值
+                        int linear_idx = i * 4 + byte;
+                        
+                        // 在這 16x16 的 Tile 中：
+                        // 我們想要先遍歷 K (0..15)，再遍歷 N (0..15)
+                        // 這樣就是 Transpose (Column-Major)
+                        
+                        int offset_k = linear_idx % 16; // K 變化最快 (Column 走訪)
+                        int offset_n = linear_idx / 16; // N 變化最慢
+                        
+                        int logical_k = k + offset_k;   // 對應 global buffer 的 row (K)
+                        int logical_n = n + offset_n;   // 對應 global buffer 的 col (N)
 
                         int8_t val = 0;
-                        // Boundary Check (Padding with 0)
-                        if (logical_r < dim_M && logical_c < dim_K) {
-                            // 注意：im2col_buffer 是 int32 (為了 offset)，要轉回 int8 傳輸
-                            printf("Reading im2col_buffer[%d][%d] = %ld\n", logical_r, logical_c,
-                                   im2col_buffers::global_im2col_buffer[logical_r][logical_c]);
-                            val = (int8_t)im2col_buffers::global_im2col_buffer[logical_r][logical_c];
+                        if (logical_k < dim_K && logical_n < dim_N) {
+                             // global_filter_buffer 是 [K][N]
+                             val = (int8_t)im2col_buffers::global_filter_buffer[logical_k][logical_n];
                         }
                         
-                        // Pack into uint32 (Little Endian)
-                        packed_val |= ((uint32_t)((uint8_t)val)) << (byte * 8);
-                    }
-                    cfu_op0(CFU_WRITE_A, i, packed_val);
-                }
-
-                // [HARDWARE STEP 3] Send Weight Tile (Matrix B sub-block)
-                // Matrix B 是 [k...k+16][n...n+16]
-                for (int i = 0; i < 64; ++i) {
-                    uint32_t packed_val = 0;
-                    for (int byte = 0; byte < 4; ++byte) {
-                        // 假設 TPU 接收 Weight 也是 Row-major (K 為 Row, N 為 Col)
-                        // 或者是 K 為 Col, N 為 Row? 
-                        // 通常: Matrix B [K][N]. 
-                        // 假設順序: Row 0 (K=k) 的 16 個 N...
-                        
-                        int logical_r = k + (i / 4);      // K 維度
-                        int logical_c = n + (i % 4) * 4 + byte; // N 維度
-
-                        int8_t val = 0;
-                        if (logical_r < dim_K && logical_c < dim_N) {
-                            val = (int8_t)im2col_buffers::global_filter_buffer[logical_r][logical_c];
-                        }
-                        packed_val |= ((uint32_t)((uint8_t)val)) << (byte * 8);
+                        // 注意 byte 順序 (Little Endian packing)
+                        // 這裡假設 TPU 讀取 32-bit 是從 LSB 開始拆
+                        packed_val |= ((uint32_t)((uint8_t)val)) << ((3-byte) * 8);
+                        // 如果你的 TPU 設計是 Big Endian (高位先讀)，請改用 ((3-byte) * 8)
+                        // 但通常是 byte * 8
+                        bytes[byte] = val;
                     }
                     cfu_op0(CFU_WRITE_B, i, packed_val);
+                    // [Debug Print]
+                    #if ENABLE_DEBUG_PRINT
+                    if (m==0 && n==0 && k==0 && i < DEBUG_LIMIT) {
+                        printf("B[%d]: %08lX -> [%d, %d, %d, %d]\n", i, packed_val, bytes[0], bytes[1], bytes[2], bytes[3]);
+                    }
+                    #endif
                 }
 
-                // [HARDWARE STEP 4] Start Compute
-                // TPU 會計算 C += A * B
+                // Start Compute
                 cfu_op0(CFU_START_TPU, 0, 0);
-            }
 
-            // [HARDWARE STEP 5] Read Result Tile (Matrix C sub-block)
-            // K 迴圈結束後，Buffer C 裡面已經是完整的 Sum
-            // 讀出 16x16 的 int32 結果
-            int buffer_ptr = 0;
-            for (int block = 0; block < 4; block++) {
-                int col_base = 4 * block; // N 維度的偏移
-                for (int row = 0; row < 16; row++) { // M 維度
-                    // 根據 functional test，一次讀 4 個 int32
-                    int32_t val3 = cfu_op0(CFU_READ_C_3, buffer_ptr, 0);
-                    int32_t val2 = cfu_op0(CFU_READ_C_2, buffer_ptr, 0);
-                    int32_t val1 = cfu_op0(CFU_READ_C_1, buffer_ptr, 0);
-                    int32_t val0 = cfu_op0(CFU_READ_C_0, buffer_ptr, 0);
+                // Read & Accumulate immediately
+                int buffer_ptr = 0;
+                for (int block = 0; block < 4; block++) {
+                    int col_base = 4 * block;
+                    for (int row = 0; row < 16; row++) {
+                        int32_t val3 = cfu_op0(CFU_READ_C_3, buffer_ptr, 0);
+                        int32_t val2 = cfu_op0(CFU_READ_C_2, buffer_ptr, 0);
+                        int32_t val1 = cfu_op0(CFU_READ_C_1, buffer_ptr, 0);
+                        int32_t val0 = cfu_op0(CFU_READ_C_0, buffer_ptr, 0);
+                        // [Debug Print Read]
+                        #if ENABLE_DEBUG_PRINT
+                        if (m==0 && n==0 && k==0 && row < 2 && block == 0) {
+                             printf("Read C[%d]: %ld, %ld, %ld, %ld\n", buffer_ptr, val3, val2, val1, val0);
+                        }
+                        #endif
+                        int real_m = m + row;
+                        int real_n_base = n + col_base;
 
-                    // 填回 Global Output Buffer (處理邊界)
-                    int real_m = m + row;
-                    int real_n_base = n + col_base;
-
-                    if (real_m < dim_M) {
-                        if (real_n_base + 0 < dim_N) im2col_buffers::global_gemm_output[real_m][real_n_base + 0] = val3;
-                        if (real_n_base + 1 < dim_N) im2col_buffers::global_gemm_output[real_m][real_n_base + 1] = val2;
-                        if (real_n_base + 2 < dim_N) im2col_buffers::global_gemm_output[real_m][real_n_base + 2] = val1;
-                        if (real_n_base + 3 < dim_N) im2col_buffers::global_gemm_output[real_m][real_n_base + 3] = val0;
+                        if (real_m < dim_M) {
+                            if (real_n_base + 0 < dim_N) im2col_buffers::global_gemm_output[real_m][real_n_base + 0] += val3;
+                            if (real_n_base + 1 < dim_N) im2col_buffers::global_gemm_output[real_m][real_n_base + 1] += val2;
+                            if (real_n_base + 2 < dim_N) im2col_buffers::global_gemm_output[real_m][real_n_base + 2] += val1;
+                            if (real_n_base + 3 < dim_N) im2col_buffers::global_gemm_output[real_m][real_n_base + 3] += val0;
+                        }
+                        buffer_ptr++;
                     }
-                    buffer_ptr++;
                 }
             }
         }
     }
 
     // =================================================================
-    // Phase 4: Write Back (Matrix C -> Output Tensor)
-    // 包含 Bias, Requantization, Activation
+    // Phase 4: Write Back
     // =================================================================
     for (int out_y = 0; out_y < output_height; ++out_y) {
         for (int out_x = 0; out_x < output_width; ++out_x) {
             for (int out_c = 0; out_c < output_depth; ++out_c) {
                 
-                // 將 (x, y) 映射回 Matrix Row Index
                 int matrix_row = out_x + out_y * output_width;
                 int matrix_col = out_c;
 
                 int32_t acc = im2col_buffers::global_gemm_output[matrix_row][matrix_col];
 
-                // 標準 TFLite 後處理 (Post-processing)
+                #if ENABLE_DEBUG_PRINT
+                if (debug_print_count < DEBUG_LIMIT) {
+                    printf("Pixel[%d,%d,%d]: TPU_Acc=%ld, Offset_Correction=%ld * %ld\n", 
+                           out_y, out_x, out_c, acc, input_offset, im2col_buffers::global_filter_sums[out_c]);
+                    debug_print_count++;
+                }
+                #endif
+
+                // [New] 加上修正項
+                acc += input_offset * im2col_buffers::global_filter_sums[out_c];
+
                 if (bias_data) {
                     acc += bias_data[out_c];
                 }
