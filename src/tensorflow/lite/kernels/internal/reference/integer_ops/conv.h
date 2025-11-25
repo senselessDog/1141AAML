@@ -42,7 +42,7 @@ limitations under the License.
 
 #define MAX_ROW_CAPACITY 1024 
 #define MAX_COL_CAPACITY 1024 
-#define MAX_CHANNEL_CAPACITY 256
+#define MAX_CHANNEL_CAPACITY 1024
 
 // 使用 "global_" 前綴區分，並放在 namespace 外或專屬 namespace
 namespace im2col_buffers {
@@ -182,19 +182,118 @@ inline void ConvPerChannel(
         }
     }
     // =================================================================
-    // Phase 3: Matrix Multiplication (Software Simulation)
-    // 目標: global_gemm_output = global_im2col_buffer * global_filter_buffer
+    // Phase 3: Hardware Tiling GEMM (Matrix Mul with CFU)
+    // global_gemm_output = global_im2col_buffer * global_filter_buffer
     // =================================================================
-    // Lab 提示：未來將此處替換為 CFU Op
     
-    for (int m = 0; m < dim_M; ++m) {
-        for (int n = 0; n < dim_N; ++n) {
-            int32_t accumulator = 0;
-            // Dot Product
-            for (int k = 0; k < dim_K; ++k) {
-                accumulator += im2col_buffers::global_im2col_buffer[m][k] * im2col_buffers::global_filter_buffer[k][n];
+    // Tiling Loop: 切割大矩陣成 16x16 小塊
+    // m 掃描 Output Pixels (Rows of A, Rows of C)
+    for (int m = 0; m < dim_M; m += TILE_SIZE) {
+        // n 掃描 Output Channels (Cols of B, Cols of C)
+        for (int n = 0; n < dim_N; n += TILE_SIZE) {
+            
+            // [HARDWARE STEP 1] Reset TPU for new Output Tile
+            cfu_op0(CFU_RESET, 0, 0); 
+            // 雖然 Lab 說不用處理邊界設定，但為了完整性可以傳送
+            // 這裡假設 TPU 內部固定跑 16x16
+            cfu_op0(CFU_SET_M, TILE_SIZE, 0);
+            cfu_op0(CFU_SET_N, TILE_SIZE, 0);
+            cfu_op0(CFU_SET_K, TILE_SIZE, 0);
+
+            // k 掃描 Kernel Depth (Cols of A, Rows of B) - 這是累積方向
+            for (int k = 0; k < dim_K; k += TILE_SIZE) {
+                
+                // [HARDWARE STEP 2] Send Input Tile (Matrix A sub-block)
+                // Matrix A 是 [m...m+16][k...k+16]
+                // 每次寫入一個 uint32 (包含 4 個 int8) -> 共寫入 16*16/4 = 64 次
+                // 注意：TPU 測試代碼是用 A_arr[4][64]，暗示每行 4 byte，共 64 行？
+                // 通常 16x16 矩陣有 256 個點。每個點 8 bit。總共 256 bytes = 64 個 uint32。
+                
+                for (int i = 0; i < 64; ++i) {
+                    uint32_t packed_val = 0;
+                    // 一個 uint32 塞 4 個 int8 (4個 K 維度)
+                    // 這取決於你的 TPU 設計，假設是 row-major 且 4-byte packed in K dimension
+                    for (int byte = 0; byte < 4; ++byte) {
+                        // 計算真實座標
+                        // int r = m + (i / 4);     // 第幾列 (0~15)
+                        // int c = k + (i % 4) * 4 + byte; // 第幾行 (每次抓4個) -> 這是假設寫入順序
+
+                        // **如果你的 TPU 寫入順序不同，這裡要調整**
+                        // 依照 functional test，A_arr 是一維 64 長度，
+                        // 這裡最保險的做法是: 模仿 Test Code 的寫入量，確保送 64 次
+                        // 假設 TPU 接收順序是: Row 0 (4 words), Row 1 (4 words)...
+                        
+                        int logical_r = m + (i / 4); // 0..15
+                        int logical_c = k + (i % 4) * 4 + byte; 
+
+                        int8_t val = 0;
+                        // Boundary Check (Padding with 0)
+                        if (logical_r < dim_M && logical_c < dim_K) {
+                            // 注意：im2col_buffer 是 int32 (為了 offset)，要轉回 int8 傳輸
+                            printf("Reading im2col_buffer[%d][%d] = %ld\n", logical_r, logical_c,
+                                   im2col_buffers::global_im2col_buffer[logical_r][logical_c]);
+                            val = (int8_t)im2col_buffers::global_im2col_buffer[logical_r][logical_c];
+                        }
+                        
+                        // Pack into uint32 (Little Endian)
+                        packed_val |= ((uint32_t)((uint8_t)val)) << (byte * 8);
+                    }
+                    cfu_op0(CFU_WRITE_A, i, packed_val);
+                }
+
+                // [HARDWARE STEP 3] Send Weight Tile (Matrix B sub-block)
+                // Matrix B 是 [k...k+16][n...n+16]
+                for (int i = 0; i < 64; ++i) {
+                    uint32_t packed_val = 0;
+                    for (int byte = 0; byte < 4; ++byte) {
+                        // 假設 TPU 接收 Weight 也是 Row-major (K 為 Row, N 為 Col)
+                        // 或者是 K 為 Col, N 為 Row? 
+                        // 通常: Matrix B [K][N]. 
+                        // 假設順序: Row 0 (K=k) 的 16 個 N...
+                        
+                        int logical_r = k + (i / 4);      // K 維度
+                        int logical_c = n + (i % 4) * 4 + byte; // N 維度
+
+                        int8_t val = 0;
+                        if (logical_r < dim_K && logical_c < dim_N) {
+                            val = (int8_t)im2col_buffers::global_filter_buffer[logical_r][logical_c];
+                        }
+                        packed_val |= ((uint32_t)((uint8_t)val)) << (byte * 8);
+                    }
+                    cfu_op0(CFU_WRITE_B, i, packed_val);
+                }
+
+                // [HARDWARE STEP 4] Start Compute
+                // TPU 會計算 C += A * B
+                cfu_op0(CFU_START_TPU, 0, 0);
             }
-            im2col_buffers::global_gemm_output[m][n] = accumulator;
+
+            // [HARDWARE STEP 5] Read Result Tile (Matrix C sub-block)
+            // K 迴圈結束後，Buffer C 裡面已經是完整的 Sum
+            // 讀出 16x16 的 int32 結果
+            int buffer_ptr = 0;
+            for (int block = 0; block < 4; block++) {
+                int col_base = 4 * block; // N 維度的偏移
+                for (int row = 0; row < 16; row++) { // M 維度
+                    // 根據 functional test，一次讀 4 個 int32
+                    int32_t val3 = cfu_op0(CFU_READ_C_3, buffer_ptr, 0);
+                    int32_t val2 = cfu_op0(CFU_READ_C_2, buffer_ptr, 0);
+                    int32_t val1 = cfu_op0(CFU_READ_C_1, buffer_ptr, 0);
+                    int32_t val0 = cfu_op0(CFU_READ_C_0, buffer_ptr, 0);
+
+                    // 填回 Global Output Buffer (處理邊界)
+                    int real_m = m + row;
+                    int real_n_base = n + col_base;
+
+                    if (real_m < dim_M) {
+                        if (real_n_base + 0 < dim_N) im2col_buffers::global_gemm_output[real_m][real_n_base + 0] = val3;
+                        if (real_n_base + 1 < dim_N) im2col_buffers::global_gemm_output[real_m][real_n_base + 1] = val2;
+                        if (real_n_base + 2 < dim_N) im2col_buffers::global_gemm_output[real_m][real_n_base + 2] = val1;
+                        if (real_n_base + 3 < dim_N) im2col_buffers::global_gemm_output[real_m][real_n_base + 3] = val0;
+                    }
+                    buffer_ptr++;
+                }
+            }
         }
     }
 
