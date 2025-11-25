@@ -275,7 +275,7 @@ void do_matmul_num(int test_num) {
     // -----------------------------------------------------
 
     // 1. Initialization
-    cfu_op0(CFU_RESET, 0, 0); // Hard Reset (Op 1)
+    cfu_op0(CFU_RESET, 0, 0); // Hard Reset (Op 1) To reset TPU internal state
     cfu_op0(CFU_SET_K, K, 0);
     cfu_op0(CFU_SET_M, M, 0);
     cfu_op0(CFU_SET_N, N, 0);
