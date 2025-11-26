@@ -29,15 +29,15 @@
 #define DEBUG_LIMIT 5
 
 // 硬體方塊大小 (Tile Size)
-#define TILE_SIZE 16
+#define TILE_SIZE 128
 
 #define MAX_ROW_CAPACITY 1024  
 #define MAX_COL_CAPACITY 1024
 #define MAX_CHANNEL_CAPACITY 512
 
 namespace im2col_buffers {
-    int32_t global_im2col_buffer[MAX_ROW_CAPACITY][MAX_COL_CAPACITY];    // Matrix A
-    int32_t global_filter_buffer[MAX_COL_CAPACITY][MAX_CHANNEL_CAPACITY]; // Matrix B
+    int8_t global_im2col_buffer[MAX_ROW_CAPACITY][MAX_COL_CAPACITY];    // Matrix A
+    int8_t global_filter_buffer[MAX_COL_CAPACITY][MAX_CHANNEL_CAPACITY]; // Matrix B
     int32_t global_gemm_output[MAX_ROW_CAPACITY][MAX_CHANNEL_CAPACITY];   // Matrix C
     int32_t global_filter_sums[MAX_CHANNEL_CAPACITY];
 }
@@ -118,7 +118,7 @@ inline void ConvPerChannel(
         for (int fy = 0; fy < filter_height; ++fy) {
             for (int fx = 0; fx < filter_width; ++fx) {
                 for (int ic = 0; ic < filter_input_depth; ++ic) {
-                    int32_t val = filter_data[Offset(filter_shape, out_c, fy, fx, ic)];
+                    int8_t val = filter_data[Offset(filter_shape, out_c, fy, fx, ic)];
                     #if ENABLE_DEBUG_PRINT
                     if (out_c == 0 && batch == 0) { // 只印第一個 Channel
                          printf("Filter[%d] read at (y=%d,x=%d,ic=%d): %ld\n", out_c, fy, fx, ic, val);
@@ -153,7 +153,7 @@ inline void ConvPerChannel(
                     const int in_x = in_x_origin + dilation_width_factor * fx;
                     for (int ic = 0; ic < input_depth; ++ic) {
                         
-                        int32_t val_to_send;
+                        int8_t val_to_send;
                         if (in_x >= 0 && in_x < input_width && in_y >= 0 && in_y < input_height) {
                              val_to_send = input_data[Offset(input_shape, batch, in_y, in_x, ic)];
                         } else {
@@ -239,8 +239,8 @@ inline void ConvPerChannel(
                 // [FIXED] Send Input A (Vertical Strip Packing)
                 // 目標：填寫 K=0 的 4 個 Row，再填寫 K=1 的 4 個 Row...
                 int write_idx = 0;
-                for (int m_strip = 0; m_strip < 16; m_strip += 4) { 
-                    for (int k_idx = 0; k_idx < 16; ++k_idx) {      
+                for (int m_strip = 0; m_strip < TILE_SIZE; m_strip += 4) { 
+                    for (int k_idx = 0; k_idx < TILE_SIZE; ++k_idx) {      
                         uint32_t packed_val = 0;
                         #if ENABLE_DEBUG_PRINT
                         int8_t bytes[4];
@@ -251,7 +251,7 @@ inline void ConvPerChannel(
                             
                             int8_t val = 0;
                             if (logical_r < dim_M && logical_c < dim_K) {
-                                val = (int8_t)im2col_buffers::global_im2col_buffer[logical_r][logical_c];
+                                val = im2col_buffers::global_im2col_buffer[logical_r][logical_c];
                             }
                             // Pack: MSB (Byte 3) -> Row 0 (top row)
                             packed_val |= ((uint32_t)((uint8_t)val)) << ((3 - byte) * 8);
@@ -272,8 +272,8 @@ inline void ConvPerChannel(
                 // [FIXED] Send Weight B (Vertical Strip Packing)
                 // 目標：填寫 K=0 的 4 個 Col，再填寫 K=1 的 4 個 Col...
                 write_idx = 0;
-                for (int n_strip = 0; n_strip < 16; n_strip += 4) { 
-                    for (int k_idx = 0; k_idx < 16; ++k_idx) {      
+                for (int n_strip = 0; n_strip < TILE_SIZE; n_strip += 4) { 
+                    for (int k_idx = 0; k_idx < TILE_SIZE; ++k_idx) {      
                         uint32_t packed_val = 0;
                         #if ENABLE_DEBUG_PRINT
                         int8_t bytes[4];
@@ -284,7 +284,7 @@ inline void ConvPerChannel(
                             
                             int8_t val = 0;
                             if (logical_r < dim_K && logical_c < dim_N) {
-                                 val = (int8_t)im2col_buffers::global_filter_buffer[logical_r][logical_c];
+                                 val = im2col_buffers::global_filter_buffer[logical_r][logical_c];
                             }
                             // Pack: MSB -> Col 0
                             packed_val |= ((uint32_t)((uint8_t)val)) << ((3 - byte) * 8);
@@ -306,23 +306,18 @@ inline void ConvPerChannel(
 
                 // Read & Accumulate
                 int buffer_ptr = 0;
-                for (int block = 0; block < 4; block++) {
-                    int col_base = 4 * block;
-                    for (int row = 0; row < 16; row++) {
+                for (int n_blk = 0; n_blk < TILE_SIZE/4; ++n_blk) {
+                    int col_base = n_blk * 4;
+                    for (int row = 0; row < TILE_SIZE; ++row) {
                         int32_t val3 = cfu_op0(CFU_READ_C_3, buffer_ptr, 0);
                         int32_t val2 = cfu_op0(CFU_READ_C_2, buffer_ptr, 0);
                         int32_t val1 = cfu_op0(CFU_READ_C_1, buffer_ptr, 0);
                         int32_t val0 = cfu_op0(CFU_READ_C_0, buffer_ptr, 0);
 
-                        #if ENABLE_DEBUG_PRINT
-                        if (m==0 && n==0 && k==0 && row < 2 && block == 0) {
-                             printf("Read C[%d]: %ld, %ld, %ld, %ld\n", buffer_ptr, val3, val2, val1, val0);
-                        }
-                        #endif
-
                         int real_m = m + row;
                         int real_n_base = n + col_base;
 
+                        // 只有在有效範圍內才累加到 Global Buffer
                         if (real_m < dim_M) {
                             if (real_n_base + 0 < dim_N) im2col_buffers::global_gemm_output[real_m][real_n_base + 0] += val3;
                             if (real_n_base + 1 < dim_N) im2col_buffers::global_gemm_output[real_m][real_n_base + 1] += val2;
