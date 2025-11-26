@@ -24,16 +24,16 @@
 #define CFU_READ_C_0    10 // LSB
 
 // 除錯開關：設為 1 開啟，0 關閉
-#define ENABLE_DEBUG_PRINT 1
+#define ENABLE_DEBUG_PRINT 0
 // 只印出前 N 筆資料，避免洗版
 #define DEBUG_LIMIT 5
-static int debug_print_count = 0;
+
 // 硬體方塊大小 (Tile Size)
 #define TILE_SIZE 16
 
-#define MAX_ROW_CAPACITY 128  
-#define MAX_COL_CAPACITY 128  
-#define MAX_CHANNEL_CAPACITY 128
+#define MAX_ROW_CAPACITY 1024  
+#define MAX_COL_CAPACITY 1024
+#define MAX_CHANNEL_CAPACITY 512
 
 namespace im2col_buffers {
     int32_t global_im2col_buffer[MAX_ROW_CAPACITY][MAX_COL_CAPACITY];    // Matrix A
@@ -98,7 +98,8 @@ inline void ConvPerChannel(
 
   #if ENABLE_DEBUG_PRINT
   // 重置 Debug 計數器
-  debug_print_count = 0;
+  // debug_print_count = 0;
+  static int debug_print_count = 0;
   printf("\n=== ConvPerChannel Debug Info ===\n");
   printf("Input Offset: %ld, Output Offset: %ld\n", input_offset, output_offset);
   printf("Dimensions: M=%d, K=%d, N=%d\n", dim_M, dim_K, dim_N);
@@ -132,7 +133,7 @@ inline void ConvPerChannel(
         
         #if ENABLE_DEBUG_PRINT
         if (out_c < DEBUG_LIMIT) {
-             printf("Filter[%d] Sum: %ld\n", out_c, current_filter_sum);
+            //  printf("Filter[%d] Sum: %ld\n", out_c, current_filter_sum);
         }
         #endif
     }
@@ -160,7 +161,7 @@ inline void ConvPerChannel(
                         }
                         #if ENABLE_DEBUG_PRINT
                         if (batch == 0 && out_y == 0 && out_x == 0) {
-                            printf("Input read at Pixel[0,0] (in_y=%d, in_x=%d, ic=%d): %ld\n", in_y, in_x, ic, val_to_send);
+                            // printf("Input read at Pixel[0,0] (in_y=%d, in_x=%d, ic=%d): %ld\n", in_y, in_x, ic, val_to_send);
                         }
                         #endif
                         im2col_buffers::global_im2col_buffer[current_im2col_row][current_im2col_col++] = val_to_send;
@@ -170,12 +171,52 @@ inline void ConvPerChannel(
             current_im2col_row++;
         }
     }
-    
+    // =================================================================
+    // [NEW] Debug Print Global Buffers
+    // =================================================================
+    #if ENABLE_DEBUG_PRINT
+    // 只針對第一個 Batch 印出，避免洗版
+    if (batch == 0) {
+        printf("\n=== Global Buffers Check (After Phase 1 & 2) ===\n");
+        
+        // Print Matrix A (im2col buffer)
+        printf("Global Im2Col Buffer (Matrix A) [M=%d, K=%d]:\n", dim_M, dim_K);
+        // 只印出前 8 行和前 8 列，避免太大
+        int print_m = std::min(dim_M, 8);
+        int print_k = std::min(dim_K, 8);
+        
+        for (int m = 0; m < print_m; ++m) {
+            printf("Row %d: ", m);
+            for (int k = 0; k < print_k; ++k) {
+                printf("%ld ", im2col_buffers::global_im2col_buffer[m][k]);
+            }
+            printf("\n");
+        }
+
+        // Print Matrix B (Filter buffer)
+        printf("\nGlobal Filter Buffer (Matrix B) [K=%d, N=%d]:\n", dim_K, dim_N);
+        // 只印出前 8 行和前 8 列
+        int print_n = std::min(dim_N, 8);
+        
+        for (int k = 0; k < print_k; ++k) {
+            printf("Row %d: ", k);
+            for (int n = 0; n < print_n; ++n) {
+                printf("%ld ", im2col_buffers::global_filter_buffer[k][n]);
+            }
+            printf("\n");
+        }
+        printf("==============================================\n\n");
+    }
+    #endif
     // =================================================================
     // Phase 3: Hardware Tiling GEMM (含軟體累加)
     // =================================================================
     
-    // 1. 清空 Output Buffer
+    // =================================================================
+    // Phase 3: Hardware Tiling GEMM (Correct Vertical Packing)
+    // =================================================================
+    
+    // Init Output Buffer
     for (int m = 0; m < dim_M; ++m) {
         for (int n = 0; n < dim_N; ++n) {
              im2col_buffers::global_gemm_output[m][n] = 0;
@@ -186,91 +227,84 @@ inline void ConvPerChannel(
         for (int n = 0; n < dim_N; n += TILE_SIZE) {
             for (int k = 0; k < dim_K; k += TILE_SIZE) {
                 
-                // Hardware Reset
                 cfu_op0(CFU_RESET, 0, 0); 
                 cfu_op0(CFU_SET_M, TILE_SIZE, 0);
                 cfu_op0(CFU_SET_N, TILE_SIZE, 0);
                 cfu_op0(CFU_SET_K, TILE_SIZE, 0);
-                // [Debug] Track packing
+
                 #if ENABLE_DEBUG_PRINT
                 if (m==0 && n==0 && k==0) printf("--- Sending Tile (0,0) ---\n");
                 #endif
-                // Send Input Tile A
-                for (int i = 0; i < 64; ++i) {
-                    uint32_t packed_val = 0;
-                    int8_t bytes[4]; // For debug print
-                    for (int byte = 0; byte < 4; ++byte) {
-                        int logical_r = m + (i / 4);
-                        int logical_c = k + (i % 4) * 4 + byte; 
-                        int8_t val = 0;
-                        if (logical_r < dim_M && logical_c < dim_K) {
-                            val = (int8_t)im2col_buffers::global_im2col_buffer[logical_r][logical_c];
+
+                // [FIXED] Send Input A (Vertical Strip Packing)
+                // 目標：填寫 K=0 的 4 個 Row，再填寫 K=1 的 4 個 Row...
+                int write_idx = 0;
+                for (int m_strip = 0; m_strip < 16; m_strip += 4) { 
+                    for (int k_idx = 0; k_idx < 16; ++k_idx) {      
+                        uint32_t packed_val = 0;
+                        #if ENABLE_DEBUG_PRINT
+                        int8_t bytes[4];
+                        #endif
+                        for (int byte = 0; byte < 4; ++byte) {
+                            int logical_r = m + m_strip + byte; // Row 變化
+                            int logical_c = k + k_idx;          // K (Time) 固定
+                            
+                            int8_t val = 0;
+                            if (logical_r < dim_M && logical_c < dim_K) {
+                                val = (int8_t)im2col_buffers::global_im2col_buffer[logical_r][logical_c];
+                            }
+                            // Pack: MSB (Byte 3) -> Row 0 (top row)
+                            packed_val |= ((uint32_t)((uint8_t)val)) << ((3 - byte) * 8);
+                            #if ENABLE_DEBUG_PRINT
+                            bytes[byte] = val;
+                            #endif
                         }
-                        packed_val |= ((uint32_t)((uint8_t)val)) << ((3-byte) * 8);
-                        bytes[byte] = val;
+                        cfu_op0(CFU_WRITE_A, write_idx++, packed_val);
+
+                        #if ENABLE_DEBUG_PRINT
+                        if (m==0 && n==0 && k==0 && write_idx <= DEBUG_LIMIT) {
+                            printf("A_Packed[%d]: %08lX -> [%d, %d, %d, %d]\n", write_idx-1, packed_val, bytes[0], bytes[1], bytes[2], bytes[3]);
+                        }
+                        #endif
                     }
-                    cfu_op0(CFU_WRITE_A, i, packed_val);
-                    // [Debug Print]
-                    #if ENABLE_DEBUG_PRINT
-                    if (m==0 && n==0 && k==0 && i < DEBUG_LIMIT) {
-                        printf("A[%d]: %08lX -> [%d, %d, %d, %d]\n", i, packed_val, bytes[0], bytes[1], bytes[2], bytes[3]);
-                    }
-                    #endif
                 }
 
-                // Send Weight Tile B
-                // [HARDWARE STEP 3] Send Weight Tile B (Correct Transpose)
-                // 我們需要送 B 的 Column (沿著 K 軸變化)，但 TPU 會把它當作 Row 存進去
-                // 這樣 TPU 的 Dot Product 就會是 Input_Row * Weight_Column
-                
-                for (int i = 0; i < 64; ++i) {
-                    uint32_t packed_val = 0;
-                    int8_t bytes[4]; // For debug print
-                    for (int byte = 0; byte < 4; ++byte) {
-                        // [修正重點] 
-                        // 我們希望 "inner-most" 變化的數值是對應到 K 維度 (logical_r)
-                        // 這樣送進去的 4 個 bytes 才會是 B[0][0], B[1][0], B[2][0], B[3][0] (同一個 Filter, 不同深度)
-                        
-                        // i 是 0..63, byte 是 0..3
-                        // 我們讓 linear_idx = i * 4 + byte 代表我們正在送第幾個數值
-                        int linear_idx = i * 4 + byte;
-                        
-                        // 在這 16x16 的 Tile 中：
-                        // 我們想要先遍歷 K (0..15)，再遍歷 N (0..15)
-                        // 這樣就是 Transpose (Column-Major)
-                        
-                        int offset_k = linear_idx % 16; // K 變化最快 (Column 走訪)
-                        int offset_n = linear_idx / 16; // N 變化最慢
-                        
-                        int logical_k = k + offset_k;   // 對應 global buffer 的 row (K)
-                        int logical_n = n + offset_n;   // 對應 global buffer 的 col (N)
-
-                        int8_t val = 0;
-                        if (logical_k < dim_K && logical_n < dim_N) {
-                             // global_filter_buffer 是 [K][N]
-                             val = (int8_t)im2col_buffers::global_filter_buffer[logical_k][logical_n];
+                // [FIXED] Send Weight B (Vertical Strip Packing)
+                // 目標：填寫 K=0 的 4 個 Col，再填寫 K=1 的 4 個 Col...
+                write_idx = 0;
+                for (int n_strip = 0; n_strip < 16; n_strip += 4) { 
+                    for (int k_idx = 0; k_idx < 16; ++k_idx) {      
+                        uint32_t packed_val = 0;
+                        #if ENABLE_DEBUG_PRINT
+                        int8_t bytes[4];
+                        #endif
+                        for (int byte = 0; byte < 4; ++byte) {
+                            int logical_r = k + k_idx;          // K (Time) 固定
+                            int logical_c = n + n_strip + byte; // Col 變化
+                            
+                            int8_t val = 0;
+                            if (logical_r < dim_K && logical_c < dim_N) {
+                                 val = (int8_t)im2col_buffers::global_filter_buffer[logical_r][logical_c];
+                            }
+                            // Pack: MSB -> Col 0
+                            packed_val |= ((uint32_t)((uint8_t)val)) << ((3 - byte) * 8);
+                            #if ENABLE_DEBUG_PRINT
+                            bytes[byte] = val;
+                            #endif
                         }
-                        
-                        // 注意 byte 順序 (Little Endian packing)
-                        // 這裡假設 TPU 讀取 32-bit 是從 LSB 開始拆
-                        packed_val |= ((uint32_t)((uint8_t)val)) << ((3-byte) * 8);
-                        // 如果你的 TPU 設計是 Big Endian (高位先讀)，請改用 ((3-byte) * 8)
-                        // 但通常是 byte * 8
-                        bytes[byte] = val;
+                        cfu_op0(CFU_WRITE_B, write_idx++, packed_val);
+
+                        #if ENABLE_DEBUG_PRINT
+                        if (m==0 && n==0 && k==0 && write_idx <= DEBUG_LIMIT) {
+                            printf("B_Packed[%d]: %08lX -> [%d, %d, %d, %d]\n", write_idx-1, packed_val, bytes[0], bytes[1], bytes[2], bytes[3]);
+                        }
+                        #endif
                     }
-                    cfu_op0(CFU_WRITE_B, i, packed_val);
-                    // [Debug Print]
-                    #if ENABLE_DEBUG_PRINT
-                    if (m==0 && n==0 && k==0 && i < DEBUG_LIMIT) {
-                        printf("B[%d]: %08lX -> [%d, %d, %d, %d]\n", i, packed_val, bytes[0], bytes[1], bytes[2], bytes[3]);
-                    }
-                    #endif
                 }
 
-                // Start Compute
                 cfu_op0(CFU_START_TPU, 0, 0);
 
-                // Read & Accumulate immediately
+                // Read & Accumulate
                 int buffer_ptr = 0;
                 for (int block = 0; block < 4; block++) {
                     int col_base = 4 * block;
@@ -279,12 +313,13 @@ inline void ConvPerChannel(
                         int32_t val2 = cfu_op0(CFU_READ_C_2, buffer_ptr, 0);
                         int32_t val1 = cfu_op0(CFU_READ_C_1, buffer_ptr, 0);
                         int32_t val0 = cfu_op0(CFU_READ_C_0, buffer_ptr, 0);
-                        // [Debug Print Read]
+
                         #if ENABLE_DEBUG_PRINT
                         if (m==0 && n==0 && k==0 && row < 2 && block == 0) {
                              printf("Read C[%d]: %ld, %ld, %ld, %ld\n", buffer_ptr, val3, val2, val1, val0);
                         }
                         #endif
+
                         int real_m = m + row;
                         int real_n_base = n + col_base;
 
