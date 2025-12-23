@@ -25,7 +25,7 @@
 
 // 除錯開關：設為 1 開啟，0 關閉
 #define ENABLE_DEBUG_PRINT 0
-#define ENABLE_DEBUG_PRINT_CAPACITY 1
+#define ENABLE_DEBUG_PRINT_CAPACITY 0
 // 只印出前 N 筆資料，避免洗版
 #define DEBUG_LIMIT 5
 
@@ -233,7 +233,10 @@ inline void ConvPerChannel(
         for (int n = 0; n < dim_N; n += TILE_SIZE) {
             for (int k = 0; k < dim_K; k += TILE_SIZE) {
                 
-                cfu_op0(CFU_RESET, 0, 0); 
+                cfu_op0(CFU_RESET, 0, 0);
+                #if ENABLE_DEBUG_PRINT_CAPACITY
+                    printf("Finish CFU_RESET for Tile M=%d, N=%d, K=%d\n", m, n, k);
+                #endif
                 cfu_op0(CFU_SET_M, TILE_SIZE, 0);
                 cfu_op0(CFU_SET_N, TILE_SIZE, 0);
                 cfu_op0(CFU_SET_K, TILE_SIZE, 0);
