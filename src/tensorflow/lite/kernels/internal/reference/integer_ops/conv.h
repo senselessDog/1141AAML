@@ -30,7 +30,7 @@
 #define DEBUG_LIMIT 5
 
 // 硬體方塊大小 (Tile Size)
-#define TILE_SIZE 128
+#define TILE_SIZE 252
 
 #define MAX_ROW_CAPACITY 512 
 #define MAX_COL_CAPACITY 8192
